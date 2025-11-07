@@ -11,7 +11,8 @@ export default async (req, res) => {
     // هذه هي النطاقات المسموح لها بالاتصال بهذا الـ API
     const allowedOrigins = [
       'https://tadrib.ma', 
-      'https://tadrib.jaouadouarh.com', 
+      'https://tadrib.jaouadouarh.com',
+        'https://tadrib-cash.jaouadouarh.com',
       'http://localhost:3000',
       'http://127.0.0.1:5500',
      'http://127.0.0.1:5501', // إضافة منفذ آخر للتجارب
@@ -75,3 +76,4 @@ export default async (req, res) => {
     }
 
 };
+
