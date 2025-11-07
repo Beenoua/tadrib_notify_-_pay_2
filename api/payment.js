@@ -121,6 +121,7 @@ export default async (req, res) => {
         // تبديل التوكن الأولي بكود دفع كاش بلوس
         
         const cashplusResponse = await axios.post(`${youcanApiBaseUrl}/cashplus/init`, {
+                        pub_key: YOUCAN_PUBLIC_KEY, // <-- [الإصلاح] إضافة المفتاح العام هنا
             token_id: tokenId
         }, {
             headers: {
