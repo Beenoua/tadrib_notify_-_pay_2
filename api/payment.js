@@ -31,7 +31,16 @@ export default async (req, res) => {
     'https://tadrib.jaouadouarh.com', 
     'http://localhost:3000', // للتجارب المحلية
     'http://127.0.0.1:5500', // للتجارب المحلية
-    'http://127.0.0.1:5501' // إضافة منفذ آخر للتجارب
+    'http://127.0.0.1:5501', // إضافة منفذ آخر للتجارب
+    'http://127.0.0.1:5502',
+    'http://127.0.0.1:5503',
+    'http://127.0.0.1:5504',
+    'http://127.0.0.1:5505',
+    'http://127.0.0.1:5506',
+    'http://127.0.0.1:5507',
+    'http://127.0.0.1:5508',
+    'http://127.0.0.1:5509',
+    'http://127.0.0.1:55010'
   ];
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
