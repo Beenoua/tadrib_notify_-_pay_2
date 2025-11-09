@@ -54,6 +54,30 @@ const telegramTranslations = {
 };
 
 /**
+ * --- !!! [الإصلاح: دالة تنظيف الماركداون] !!! ---
+ * هذه الدالة تقوم بإزالة الأحرف الخاصة التي تسبب خطأ في Telegram
+ * @param {string} text النص المراد تنظيفه
+ * @returns {string} نص آمن للإرسال
+ */
+function sanitizeTelegram(text) {
+  if (typeof text !== 'string') {
+    return text;
+  }
+  // هذه الأحرف تتسبب في كسر تنسيق الماركداون V2
+  const charsToEscape = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+  let escapedText = text;
+  
+  // نقوم باستبدال كل حرف بنسخته الآمنة
+  // نستخدم \ قبل الحرف لإلغاء تنسيقه
+  charsToEscape.forEach(char => {
+    escapedText = escapedText.replace(new RegExp('\\' + char, 'g'), '\\' + char);
+  });
+  
+  return escapedText;
+}
+
+
+/**
  * دالة المصادقة مع Google Sheets
  */
 async function authGoogleSheets() {
@@ -72,7 +96,6 @@ async function authGoogleSheets() {
 /**
  * هذه هي الدالة الرئيسية التي تستقبل الطلبات
  */
-// --- تم التعديل: استخدام 'export default' بدلاً من 'module.exports' ---
 export default async (req, res) => {
   
   // --- إعدادات CORS ---
@@ -103,19 +126,12 @@ export default async (req, res) => {
   let bot; 
 
   try {
-    // تهيئة البوت *داخل* الـ try
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
-    
-    // ! ===================================
-    // ! Vercel يحلل JSON تلقائياً
-    // ! ===================================
     const data = req.body; 
     
     const lang = (data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang)) ? data.currentLang : 'fr';
     const t = telegramTranslations[lang];
 
-    // --- !!! [الإصلاح الرئيسي: توحيد البيانات] !!! ---
-    // هذا الكود يتحقق إذا كان الإشعار قادماً من YouCanPay (webhook) أو من الواجهة الأمامية
     const isWebhook = data.metadata && data.customer;
 
     const normalizedData = {
@@ -132,11 +148,9 @@ export default async (req, res) => {
       utm_campaign: data.utm_campaign || '',
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
-      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), // "pending" لكاش بلوس
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') // "N/A" لكاش بلوس
+      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
     };
-    // --- !!! [نهاية الإصلاح] !!! ---
-
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
@@ -178,24 +192,27 @@ export default async (req, res) => {
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
-    // [تعديل] استخدام البيانات الموحدة
+    
+    // --- !!! [الإصلاح: تنظيف البيانات قبل إرسالها] !!! ---
     const message = `
       ${t.title}
       -----------------------------------
-      ${t.course} ${normalizedData.selectedCourse}
-      ${t.qualification} ${normalizedData.qualification}
-      ${t.experience} ${normalizedData.experience}
+      ${t.course} ${sanitizeTelegram(normalizedData.selectedCourse)}
+      ${t.qualification} ${sanitizeTelegram(normalizedData.qualification)}
+      ${t.experience} ${sanitizeTelegram(normalizedData.experience)}
       -----------------------------------
-      ${t.name} ${normalizedData.clientName}
-      ${t.phone} ${normalizedData.clientPhone}
-      ${t.email} ${normalizedData.clientEmail}
+      ${t.name} ${sanitizeTelegram(normalizedData.clientName)}
+      ${t.phone} ${sanitizeTelegram(normalizedData.clientPhone)}
+      ${t.email} ${sanitizeTelegram(normalizedData.clientEmail)}
       -----------------------------------
-      ${t.status} ${normalizedData.paymentStatus}
-      ${t.tx_id} ${normalizedData.transactionId}
-      ${t.time} ${normalizedData.timestamp}
+      ${t.status} ${sanitizeTelegram(normalizedData.paymentStatus)}
+      ${t.tx_id} ${sanitizeTelegram(normalizedData.transactionId)}
+      ${t.time} ${sanitizeTelegram(normalizedData.timestamp)}
     `;
+    // --- !!! [نهاية الإصلاح] !!! ---
     
-    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
+    // [تعديل] استخدام MarkdownV2 الأكثر صرامة
+    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'MarkdownV2' });
 
     res.status(200).json({ result: 'success', message: 'Data saved and notification sent.' });
 
@@ -206,6 +223,7 @@ export default async (req, res) => {
       if (!bot) {
         bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
       }
+      // إرسال رسالة خطأ بسيطة بدون ماركداون لضمان وصولها
       await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في نظام الحجز:\n${error.message}`);
     } catch (telegramError) {
       console.error('CRITICAL: Failed to send error to Telegram:', telegramError);
