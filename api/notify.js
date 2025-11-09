@@ -79,7 +79,6 @@ export default async (req, res) => {
   const allowedOrigins = [
     'https://tadrib.ma', 
     'https://tadrib.jaouadouarh.com', 
-    'https://tadrib-cash.jaouadouarh.com',
     'http://localhost:3000',
     'http://127.0.0.1:5500',
     'http://127.0.0.1:5501'
@@ -107,36 +106,13 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
     
     // ! ===================================
-    // ! Vercel يحلل JSON تلقائياً
+    // !           **هذا هو الإصلاح**
+    // ! Vercel يحلل JSON تلقائياً، لا نستخدم JSON.parse()
     // ! ===================================
     const data = req.body; 
     
-    const lang = (data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang)) ? data.currentLang : 'fr';
+    const lang = data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang) ? data.currentLang : 'fr';
     const t = telegramTranslations[lang];
-
-    // --- !!! [الإصلاح الرئيسي: توحيد البيانات] !!! ---
-    // هذا الكود يتحقق إذا كان الإشعار قادماً من YouCanPay (webhook) أو من الواجهة الأمامية
-    const isWebhook = data.metadata && data.customer;
-
-    const normalizedData = {
-      timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
-      clientName: isWebhook ? data.customer.name : data.clientName,
-      clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-      clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
-      selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
-      qualification: isWebhook ? data.metadata.qualification : data.qualification,
-      experience: isWebhook ? data.metadata.experience : data.experience,
-      utm_source: data.utm_source || '',
-      utm_medium: data.utm_medium || '',
-      utm_campaign: data.utm_campaign || '',
-      utm_term: data.utm_term || '', 
-      utm_content: data.utm_content || '',
-      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), // "pending" لكاش بلوس
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') // "N/A" لكاش بلوس
-    };
-    // --- !!! [نهاية الإصلاح] !!! ---
-
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
@@ -160,39 +136,38 @@ export default async (req, res) => {
     }
     
     await sheet.addRow({
-      "Timestamp": normalizedData.timestamp,
-      "Inquiry ID": normalizedData.inquiryId,
-      "Full Name": normalizedData.clientName,
-      "Email": normalizedData.clientEmail,
-      "Phone Number": normalizedData.clientPhone,
-      "Selected Course": normalizedData.selectedCourse,
-      "Qualification": normalizedData.qualification,
-      "Experience": normalizedData.experience,
-      "utm_source": normalizedData.utm_source,
-      "utm_medium": normalizedData.utm_medium,
-      "utm_campaign": normalizedData.utm_campaign,
-      "utm_term": normalizedData.utm_term, 
-      "utm_content": normalizedData.utm_content,
-      "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId 
+      "Timestamp": data.timestamp,
+      "Inquiry ID": data.inquiryId,
+      "Full Name": data.clientName,
+      "Email": data.clientEmail,
+      "Phone Number": data.clientPhone,
+      "Selected Course": data.selectedCourse,
+      "Qualification": data.qualification,
+      "Experience": data.experience,
+      "utm_source": data.utm_source || '',
+      "utm_medium": data.utm_medium || '',
+      "utm_campaign": data.utm_campaign || '',
+      "utm_term": data.utm_term || '', 
+      "utm_content": data.utm_content || '',
+      "Payment Status": data.paymentStatus || 'Not Paid', 
+      "Transaction ID": data.transactionId || '' 
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
-    // [تعديل] استخدام البيانات الموحدة
     const message = `
       ${t.title}
       -----------------------------------
-      ${t.course} ${normalizedData.selectedCourse}
-      ${t.qualification} ${normalizedData.qualification}
-      ${t.experience} ${normalizedData.experience}
+      ${t.course} ${data.selectedCourse}
+      ${t.qualification} ${data.qualification}
+      ${t.experience} ${data.experience}
       -----------------------------------
-      ${t.name} ${normalizedData.clientName}
-      ${t.phone} ${normalizedData.clientPhone}
-      ${t.email} ${normalizedData.clientEmail}
+      ${t.name} ${data.clientName}
+      ${t.phone} ${data.clientPhone}
+      ${t.email} ${data.clientEmail}
       -----------------------------------
-      ${t.status} ${normalizedData.paymentStatus}
-      ${t.tx_id} ${normalizedData.transactionId}
-      ${t.time} ${normalizedData.timestamp}
+      ${t.status} ${data.paymentStatus}
+      ${t.tx_id} ${data.transactionId}
+      ${t.time} ${data.timestamp}
     `;
     
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'Markdown' });
