@@ -13,67 +13,61 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 // 3. تهيئة الخدمات
 let doc; 
 
-// --- ترجمات التيليغرام ---
+// --- [إصلاح] ترجمات التيليغرام (استخدام HTML) ---
 const telegramTranslations = {
   ar: {
-    title: "✅ **حجز مدفوع جديد (Tadrib.ma)** 💳", 
-    course: "**الدورة:**",
-    qualification: "**المؤهل:**",
-    experience: "**الخبرة:**",
-    name: "**الاسم:**",
-    phone: "**الهاتف:**",
-    email: "**الإيميل:**",
-    time: "**الوقت:**",
-    status: "**الحالة:**", 
-    tx_id: "**رقم المعاملة:**" 
+    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
+    course: "<b>الدورة:</b>",
+    qualification: "<b>المؤهل:</b>",
+    experience: "<b>الخبرة:</b>",
+    name: "<b>الاسم:</b>",
+    phone: "<b>الهاتف:</b>",
+    email: "<b>الإيميل:</b>",
+    time: "<b>الوقت:</b>",
+    status: "<b>الحالة:</b>", 
+    tx_id: "<b>رقم المعاملة:</b>" 
   },
   fr: {
-    title: "✅ **Nouvelle Réservation Payée (Tadrib.ma)** 💳", 
-    course: "**Formation:**",
-    qualification: "**Qualification:**",
-    experience: "**Expérience:**",
-    name: "**Nom:**",
-    phone: "**Téléphone:**",
-    email: "**E-mail:**",
-    time: "**Heure:**",
-    status: "**Statut:**", 
-    tx_id: "**ID Transaction:**" 
+    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
+    course: "<b>Formation:</b>",
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Expérience:</b>",
+    name: "<b>Nom:</b>",
+    phone: "<b>Téléphone:</b>",
+    email: "<b>E-mail:</b>",
+    time: "<b>Heure:</b>",
+    status: "<b>Statut:</b>", 
+    tx_id: "<b>ID Transaction:</b>" 
   },
   en: {
-    title: "✅ **New Paid Booking (Tadrib.ma)** 💳", 
-    course: "**Course:**",
-    qualification: "**Qualification:**",
-    experience: "**Experience:**",
-    name: "**Name:**",
-    phone: "**Phone:**",
-    email: "**Email:**",
-    time: "**Time:**",
-    status: "**Status:**", 
-    tx_id: "**Transaction ID:**" 
+    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
+    course: "<b>Course:</b>",
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Experience:</b>",
+    name: "<b>Name:</b>",
+    phone: "<b>Phone:</b>",
+    email: "<b>Email:</b>",
+    time: "<b>Time:</b>",
+    status: "<b>Status:</b>", 
+    tx_id: "<b>Transaction ID:</b>" 
   }
 };
+// --- نهاية الإصلاح ---
 
 /**
- * --- !!! [الإصلاح: دالة تنظيف الماركداون] !!! ---
- * هذه الدالة تقوم بإزالة الأحرف الخاصة التي تسبب خطأ في Telegram
+ * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
+ * هذه الدالة تضمن عدم كسر تنسيق HTML
  * @param {string} text النص المراد تنظيفه
  * @returns {string} نص آمن للإرسال
  */
-function sanitizeTelegram(text) {
+function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string') {
     return text;
   }
-  // هذه الأحرف تتسبب في كسر تنسيق الماركداون V2
-  const charsToEscape = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-  let escapedText = text;
-  
-  // نقوم باستبدال كل حرف بنسخته الآمنة
-  // نستخدم \ قبل الحرف لإلغاء تنسيقه
-  charsToEscape.forEach(char => {
-    escapedText = escapedText.replace(new RegExp('\\' + char, 'g'), '\\' + char);
-  });
-  
-  return escapedText;
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 
@@ -193,26 +187,26 @@ export default async (req, res) => {
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
     
-    // --- !!! [الإصلاح: تنظيف البيانات قبل إرسالها] !!! ---
+    // --- !!! [الإصلاح: تنظيف البيانات لـ HTML] !!! ---
     const message = `
-      ${t.title}
-      -----------------------------------
-      ${t.course} ${sanitizeTelegram(normalizedData.selectedCourse)}
-      ${t.qualification} ${sanitizeTelegram(normalizedData.qualification)}
-      ${t.experience} ${sanitizeTelegram(normalizedData.experience)}
-      -----------------------------------
-      ${t.name} ${sanitizeTelegram(normalizedData.clientName)}
-      ${t.phone} ${sanitizeTelegram(normalizedData.clientPhone)}
-      ${t.email} ${sanitizeTelegram(normalizedData.clientEmail)}
-      -----------------------------------
-      ${t.status} ${sanitizeTelegram(normalizedData.paymentStatus)}
-      ${t.tx_id} ${sanitizeTelegram(normalizedData.transactionId)}
-      ${t.time} ${sanitizeTelegram(normalizedData.timestamp)}
+${t.title}
+-----------------------------------
+${t.course} ${sanitizeTelegramHTML(normalizedData.selectedCourse)}
+${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
+${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
+-----------------------------------
+${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
+${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
+${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
+-----------------------------------
+${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
+${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
+${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
     // --- !!! [نهاية الإصلاح] !!! ---
     
-    // [تعديل] استخدام MarkdownV2 الأكثر صرامة
-    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'MarkdownV2' });
+    // [تعديل] استخدام HTML
+    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
     res.status(200).json({ result: 'success', message: 'Data saved and notification sent.' });
 
@@ -223,7 +217,7 @@ export default async (req, res) => {
       if (!bot) {
         bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
       }
-      // إرسال رسالة خطأ بسيطة بدون ماركداون لضمان وصولها
+      // إرسال رسالة خطأ بسيطة بدون تنسيق لضمان وصولها
       await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في نظام الحجز:\n${error.message}`);
     } catch (telegramError) {
       console.error('CRITICAL: Failed to send error to Telegram:', telegramError);
