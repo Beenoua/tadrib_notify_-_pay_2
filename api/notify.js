@@ -114,6 +114,29 @@ export default async (req, res) => {
     const lang = data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang) ? data.currentLang : 'fr';
     const t = telegramTranslations[lang];
 
+// --- !!! [الإصلاح الرئيسي: توحيد البيانات] !!! ---
+    // هذا الكود يتحقق إذا كان الإشعار قادماً من YouCanPay (webhook) أو من الواجهة الأمامية
+    const isWebhook = data.metadata && data.customer;
+
+    const normalizedData = {
+      timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
+      inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
+      clientName: isWebhook ? data.customer.name : data.clientName,
+      clientEmail: isWebhook ? data.customer.email : data.clientEmail,
+      clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
+      selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
+      qualification: isWebhook ? data.metadata.qualification : data.qualification,
+      experience: isWebhook ? data.metadata.experience : data.experience,
+      utm_source: data.utm_source || '',
+      utm_medium: data.utm_medium || '',
+      utm_campaign: data.utm_campaign || '',
+      utm_term: data.utm_term || '', 
+      utm_content: data.utm_content || '',
+      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), // "pending" لكاش بلوس
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') // "N/A" لكاش بلوس
+    };
+    // --- !!! [نهاية الإصلاح] !!! ---
+
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
     
@@ -189,4 +212,3 @@ export default async (req, res) => {
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
-
