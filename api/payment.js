@@ -3,9 +3,10 @@ import axios from 'axios';
 import { Buffer } from 'buffer'; // إضافة Buffer
 
 // 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
-const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
-const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
-const YOUCAN_MODE = process.env.YOUCAN_MODE;
+// لا تقم بقراءة المتغيرات هنا في النطاق العام (Global Scope)
+// const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
+// const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
+// const YOUCAN_MODE = process.env.YOUCAN_MODE;
 
 // إعدادات الدورات (يجب أن تكون الأسعار هنا في الخادم للأمان)
 const courseData = {
@@ -20,16 +21,26 @@ const discountPercentage = 35; // نسبة الخصم
 /**
  * هذه هي الدالة الرئيسية التي تستقبل طلبات إنشاء الدفع
  */
-// --- تم التعديل: استخدام 'export default' بدلاً من 'module.exports' ---
 export default async (req, res) => {
+
+  // --- !!! [الإصلاح: قراءة المتغيرات داخل الدالة] !!! ---
+  // هذا يجبر Vercel على قراءة المتغيرات المحدثة مع كل طلب
+  const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
+  const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
+  const YOUCAN_MODE = process.env.YOUCAN_MODE;
+  
+  // --- !!! [إضافة سجل تتبع] !!! ---
+  console.log(`[PAYMENT_DEBUG] YOUCAN_MODE: ${YOUCAN_MODE}`);
+  // --- نهاية الإضافة ---
+
   
   // ===================================
   //           **إعدادات CORS**
   // ===================================
   const allowedOrigins = [
     'https://tadrib.ma', 
-    'https://tadrib.jaouadouarh.com',
-      'https://tadrib-cash.jaouadouarh.com',
+    'https://tadrib.jaouadouarh.com', 
+    'https://tadrib-cash.jaouadouarh.com',
     'http://localhost:3000', // للتجارب المحلية
     'http://127.0.0.1:5500', // للتجارب المحلية
     'http://127.0.0.1:5501', // إضافة منفذ آخر للتجارب
@@ -61,9 +72,6 @@ export default async (req, res) => {
   }
 
   try {
-    // ! ===================================
-    // ! Vercel يحلل JSON تلقائياً، لا نستخدم JSON.parse()
-    // ! ===================================
     const data = req.body; 
 
     // 1. التحقق من الدورة وحساب السعر (في الخادم)
@@ -72,7 +80,6 @@ export default async (req, res) => {
         throw new Error('Course not found');
     }
     const originalPrice = courseData[courseKey].originalPrice;
-    // [تعديل] حساب المبلغ
     const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
 
 
@@ -81,18 +88,20 @@ export default async (req, res) => {
     const base64Keys = Buffer.from(keys).toString('base64');
     
     // --- =================================== ---
-    // ---           **هذا هو التصحيح** ---
+    //           **تصحيح قراءة المتغير**
     // --- =================================== ---
-    // تحديد الرابط الأساسي بناءً على وضع التشغيل
     const isSandbox = YOUCAN_MODE === 'sandbox';
     const youcanApiBaseUrl = isSandbox ? 'https://youcanpay.com/sandbox/api' : 'https://youcanpay.com/api';
     // --- =================================== ---
-    // ---         نهاية التصحيح              ---
-    // --- =================================== ---
+
+    // --- !!! [إضافة سجل تتبع] !!! ---
+    const tokenizeUrl = `${youcanApiBaseUrl}/tokenize`;
+    console.log(`[PAYMENT_DEBUG] Calling Tokenize API: ${tokenizeUrl}`);
+    // --- نهاية الإضافة ---
 
     // 3. إنشاء "Token" الأولي (مشترك لكل الطرق)
-    const tokenResponse = await axios.post(`${youcanApiBaseUrl}/tokenize`, {
-        pri_key: YOUCAN_PRIVATE_KEY, // <-- **تمت إضافة المفتاح السري هنا**
+    const tokenResponse = await axios.post(tokenizeUrl, {
+        pri_key: YOUCAN_PRIVATE_KEY, 
         amount: amount * 100, // السعر بالسنتيم
         currency: "MAD",
         order_id: data.inquiryId, 
@@ -107,8 +116,6 @@ export default async (req, res) => {
             experience: data.experience,
             inquiryId: data.inquiryId
         },
-        // --- !!! [تعديل هام] !!! ---
-        // يجب أن تشير هذه الروابط إلى الصفحة الفعلية التي يوجد بها الكود
         redirect_url: `https://tadrib.ma/index-1.html#payment-success`, 
         error_url: `https://tadrib.ma/index-1.html#payment-failed`     
     }, {
@@ -128,14 +135,18 @@ export default async (req, res) => {
     // --- !!! [المنطق الجديد: التحقق من طريقة الدفع] !!! ---
     if (data.paymentMethod === 'cashplus') {
         // --- 4.أ: منطق كاش بلوس ---
-        // تبديل التوكن الأولي بكود دفع كاش بلوس
+
+        // --- !!! [إضافة سجل تتبع] !!! ---
+        const cashplusUrl = `${youcanApiBaseUrl}/cashplus/init`;
+        console.log(`[PAYMENT_DEBUG] Calling CashPlus API: ${cashplusUrl}`);
+        // --- نهاية الإضافة ---
         
-        const cashplusResponse = await axios.post(`${youcanApiBaseUrl}/cashplus/init`, {
-                        pub_key: YOUCAN_PUBLIC_KEY, // <-- [الإصلاح] إضافة المفتاح العام هنا
+        const cashplusResponse = await axios.post(cashplusUrl, {
+            pub_key: YOUCAN_PUBLIC_KEY,
             token_id: tokenId
         }, {
             headers: {
-                'Authorization': `Basic ${base64Keys}`, // يتطلب المفاتيح في الهيدر
+                'Authorization': `Basic ${base64Keys}`,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             }
