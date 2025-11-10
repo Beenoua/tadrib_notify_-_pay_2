@@ -26,7 +26,8 @@ const telegramTranslations = {
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
-    req_id: "<b>معرف الطلب:</b>" // <-- تمت الإضافة
+    req_id: "<b>معرف الطلب:</b>"
+  
   },
   fr: {
     title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
@@ -202,6 +203,7 @@ ${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
 ${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
 ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
+${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
@@ -229,4 +231,5 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
+
 
