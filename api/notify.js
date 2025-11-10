@@ -25,7 +25,8 @@ const telegramTranslations = {
     email: "<b>الإيميل:</b>",
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>", 
-    tx_id: "<b>رقم المعاملة:</b>" 
+    tx_id: "<b>رقم المعاملة:</b>",
+    req_id: "<b>معرف الطلب:</b>" // <-- تمت الإضافة
   },
   fr: {
     title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
@@ -37,7 +38,8 @@ const telegramTranslations = {
     email: "<b>E-mail:</b>",
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
-    tx_id: "<b>ID Transaction:</b>" 
+    tx_id: "<b>ID Transaction:</b>",
+    req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
   },
   en: {
     title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
@@ -49,7 +51,8 @@ const telegramTranslations = {
     email: "<b>Email:</b>",
     time: "<b>Time:</b>",
     status: "<b>Status:</b>", 
-    tx_id: "<b>Transaction ID:</b>" 
+    tx_id: "<b>Transaction ID:</b>",
+    req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
   }
 };
 // --- نهاية الإصلاح ---
@@ -226,3 +229,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
+
