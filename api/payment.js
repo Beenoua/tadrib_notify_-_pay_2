@@ -116,8 +116,8 @@ export default async (req, res) => {
             experience: data.experience,
             inquiryId: data.inquiryId
         },
-        redirect_url: `https://tadrib.ma/index-1.html#payment-success`, 
-        error_url: `https://tadrib.ma/index-1.html#payment-failed`     
+        redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
+        error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
         headers: {
             'Content-Type': 'application/json',
