@@ -181,6 +181,13 @@ export default async (req, res) => {
     } else if (paymentMethod === 'CashPlus' && payload.data?.cashplus_code) {
         cashplusCode = payload.data.cashplus_code; 
     }
+    // --- [الإضافة المطلوبة هنا] ---
+    // 1. قراءة الوضع (Mode) من الـ metadata
+    const currentMode = metadata.mode || 'live'; // الافتراضي 'live' للأمان
+
+    // 2. تحديد نص الحالة (Status) بناءً على طلبك
+    const statusText = (currentMode === 'sandbox') ? 'Sandbox' : 'Paid';
+    // --- [نهاية الإضافة] ---
 
     // 4. الاتصال بـ Google Sheets
     const doc = await initGoogleSheet();
@@ -200,7 +207,7 @@ export default async (req, res) => {
       "Qualification": metadata.qualification || '',
       "Experience": metadata.experience || '',
       // الأعمدة الجديدة التي طلبتها
-      "Status": "Paid", // الحالة دائماً "Paid"
+      "Status": statusText, // (استبدال "Paid" الثابتة بالمتغير الجديد)
       "Payment Method": paymentMethod,
       "Transaction ID": transactionId,
       "CashPlus Code": cashplusCode,
@@ -225,7 +232,7 @@ export default async (req, res) => {
     // 6. إرسال إشعار التيليغرام
     const reportData = {
         ...metadata, // يحتوي على كل بيانات العميل (الاسم، الايميل، الخ)
-        status: "Paid",
+        status: statusText, // (استبدال "Paid" الثابتة)
         transactionId: transactionId,
         cashplusCode: cashplusCode,
         timestamp: timestamp
