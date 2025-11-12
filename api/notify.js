@@ -231,4 +231,3 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
-
