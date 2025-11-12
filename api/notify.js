@@ -26,8 +26,7 @@ const telegramTranslations = {
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
-    req_id: "<b>معرف الطلب:</b>",
-    method: "<b>طريقة الدفع:</b>",
+    req_id: "<b>معرف الطلب:</b>"
   
   },
   fr: {
@@ -41,8 +40,7 @@ const telegramTranslations = {
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
     tx_id: "<b>ID Transaction:</b>",
-    req_id: "<b>ID de requête:</b>", // <-- تمت الإضافة
-    method: "<b>mode de paiement:</b>",
+    req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
   },
   en: {
     title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
@@ -55,8 +53,7 @@ const telegramTranslations = {
     time: "<b>Time:</b>",
     status: "<b>Status:</b>", 
     tx_id: "<b>Transaction ID:</b>",
-    req_id: "<b>Request ID:</b>", // <-- تمت الإضافة
-    method: "<b>payment method:</b>",
+    req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
   }
 };
 // --- نهاية الإصلاح ---
@@ -150,10 +147,7 @@ export default async (req, res) => {
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'),
-      paymentMethod: isWebhook ? data.method : (data.paymentMethod || ''),
-      paymentMethod: data.paymentMethod || '',
-
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
@@ -168,7 +162,7 @@ export default async (req, res) => {
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-      "Payment Status", "Transaction ID", "payment Method"
+      "Payment Status", "Transaction ID" 
     ];
 
     await sheet.loadHeaderRow(); 
@@ -192,8 +186,7 @@ export default async (req, res) => {
       "utm_term": normalizedData.utm_term, 
       "utm_content": normalizedData.utm_content,
       "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId,
-      "payment Method": normalizedData.paymentMethod
+      "Transaction ID": normalizedData.transactionId 
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
@@ -212,7 +205,6 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
-${t.method} ${sanitizeTelegramHTML(normalizedData.paymentmethod)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
