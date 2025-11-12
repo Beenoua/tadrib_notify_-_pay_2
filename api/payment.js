@@ -1,11 +1,22 @@
-// --- [تصحيح]: تمت إعادة كتابته بالكامل لاستخدام (ESM) بدلاً من (CJS) ---
+// --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import axios from 'axios';
-import { Buffer } from 'buffer';
-// [حل المشكلة 2]: استيراد الأسعار من المصدر الوحيد (باستخدام ESM)
-// ملاحظة: Vercel تتطلب غالباً الامتداد .js في الاستيراد
-import { calculateDiscountedPrice } from './utils/pricing.js'; 
+import { Buffer } from 'buffer'; // إضافة Buffer
 
-// 2. إعدادات الأمان (يتم قراءتها داخل الدالة)
+// 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
+// لا تقم بقراءة المتغيرات هنا في النطاق العام (Global Scope)
+// const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
+// const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
+// const YOUCAN_MODE = process.env.YOUCAN_MODE;
+
+// إعدادات الدورات (يجب أن تكون الأسعار هنا في الخادم للأمان)
+const courseData = {
+    pmp: { originalPrice: 2800 },
+    planning: { originalPrice: 2800 },
+    qse: { originalPrice: 2450 },
+    softskills: { originalPrice: 1700 },
+    other: { originalPrice: 199 } // إضافة سعر افتراضي
+};
+const discountPercentage = 35; // نسبة الخصم
 
 /**
  * هذه هي الدالة الرئيسية التي تستقبل طلبات إنشاء الدفع
@@ -13,113 +24,122 @@ import { calculateDiscountedPrice } from './utils/pricing.js';
 export default async (req, res) => {
 
   // --- !!! [الإصلاح: قراءة المتغيرات داخل الدالة] !!! ---
+  // هذا يجبر Vercel على قراءة المتغيرات المحدثة مع كل طلب
   const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
   const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
-  const YOUCAN_MODE = process.env.YOUCAN_MODE || 'live'; // الافتراضي 'live'
-
-  // السماح بالطلبات (CORS)
-  res.setHeader('Access-Control-Allow-Origin', '*'); // في الإنتاج، استبدل * بنطاقك
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-  }
-  if (req.method !== 'POST') {
-      return res.status(405).send('Method Not Allowed');
-  }
+  const YOUCAN_MODE = process.env.YOUCAN_MODE;
   
+  // --- !!! [إضافة سجل تتبع] !!! ---
+  console.log(`[PAYMENT_DEBUG] YOUCAN_MODE: ${YOUCAN_MODE}`);
+  // --- نهاية الإضافة ---
+
+  
+  // ===================================
+  //           **إعدادات CORS**
+  // ===================================
+  const allowedOrigins = [
+    'https://tadrib.ma', 
+    'https://tadrib.jaouadouarh.com', 
+    'https://tadrib-cash.jaouadouarh.com',
+    'http://localhost:3000', // للتجارب المحلية
+    'http://127.0.0.1:5500', // للتجارب المحلية
+    'http://127.0.0.1:5501', // إضافة منفذ آخر للتجارب
+    'http://127.0.0.1:5502',
+    'http://127.0.0.1:5503',
+    'http://127.0.0.1:5504',
+    'http://127.0.0.1:5505',
+    'http://127.0.0.1:5506',
+    'http://127.0.0.1:5507',
+    'http://127.0.0.1:5508',
+    'http://127.0.0.1:5509',
+    'http://127.0.0.1:55010'
+  ];
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  // ===================================
+
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Method Not Allowed' });
+  }
+
   try {
-    // --- 1. استقبال كل البيانات من الواجهة الأمامية ---
-    const {
-        clientName,
-        clientEmail,
-        clientPhone,
-        courseKey,
-        selectedCourse,
-        qualification,
-        experience,
-        paymentMethod,
-        inquiryId,
-        lang, // [حل المشكلة 3]: استقبال اللغة
-        utm_source, // استقبال UTMs
-        utm_medium,
-        utm_campaign,
-        utm_term,
-        utm_content
-    } = req.body;
+    const data = req.body; 
 
-    // التحقق من وجود مفتاح الدورة
-    if (!courseKey) {
-        throw new Error('Course key (courseKey) is missing.');
+    // 1. التحقق من الدورة وحساب السعر (في الخادم)
+    const courseKey = data.courseKey || 'other'; // افتراضي
+    if (!courseData[courseKey]) {
+        throw new Error('Course not found');
     }
+    const originalPrice = courseData[courseKey].originalPrice;
+    const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
 
-    // --- 2. حساب السعر (بشكل آمن من الخادم) ---
-    // [حل المشكلة 2]: استخدام الدالة المركزية
-    const amount = calculateDiscountedPrice(courseKey);
 
-    // --- 3. تجهيز الاتصال بـ YouCanPay ---
-    const API_URL = (YOUCAN_MODE === 'sandbox')
-        ? 'https://youcanpay.com/sandbox/api' 
-        : 'https://youcanpay.com/api';
-        
-    const tokenizeUrl = `${API_URL}/tokenize`;
+    // 2. تهيئة YouCanPay
+    const keys = `${YOUCAN_PUBLIC_KEY}:${YOUCAN_PRIVATE_KEY}`;
+    const base64Keys = Buffer.from(keys).toString('base64');
     
-    // --- 4. بناء الحمولة (Payload) ---
-    const payload = {
-        pri_key: YOUCAN_PRIVATE_KEY,
-        amount: amount * 100, // تحويل الدرهم إلى سنتيم
-        currency: 'MAD',
-        order_id: inquiryId, 
-        customer_info: {
-            name: clientName,
-            email: clientEmail,
-            phone: clientPhone,
-        },
-        // [تعديل حاسم]: تمرير "كل" بيانات العميل + اللغة + الوضع إلى metadata
-        metadata: {
-            inquiry_id: inquiryId,
-            client_name: clientName,
-            client_email: clientEmail,
-            client_phone: clientPhone,
-            course_key: courseKey,
-            course_name: selectedCourse,
-            qualification: qualification,
-            experience: experience,
-            payment_method: paymentMethod,
-            lang: lang, // [حل المشكلة 3]
-            mode: YOUCAN_MODE, // [حل مشكلة Sandbox]
-            // تمرير UTMs
-            utm_source: utm_source || '',
-            utm_medium: utm_medium || '',
-            utm_campaign: utm_campaign || '',
-            utm_term: utm_term || '',
-            utm_content: utm_content || ''
-        },
-        // روابط إعادة التوجيه (مهمة للبطاقة البنكية)
-        redirect_url: `https://tadrib.ma/#payment-success?id=${inquiryId}`, // استخدام الرابط الحقيقي
-        error_url: `https://tadrib.ma/#payment-failed?id=${inquiryId}`
-    };
+    // --- =================================== ---
+    //           **تصحيح قراءة المتغير**
+    // --- =================================== ---
+    const isSandbox = YOUCAN_MODE === 'sandbox';
+    const youcanApiBaseUrl = isSandbox ? 'https://youcanpay.com/sandbox/api' : 'https://youcanpay.com/api';
+    // --- =================================== ---
 
-    // --- 5. استدعاء Tokenize API ---
-    const youcanResponse = await axios.post(tokenizeUrl, payload, {
+    // --- !!! [إضافة سجل تتبع] !!! ---
+    const tokenizeUrl = `${youcanApiBaseUrl}/tokenize`;
+    console.log(`[PAYMENT_DEBUG] Calling Tokenize API: ${tokenizeUrl}`);
+    // --- نهاية الإضافة ---
+
+    // 3. إنشاء "Token" الأولي (مشترك لكل الطرق)
+    const tokenResponse = await axios.post(tokenizeUrl, {
+        pri_key: YOUCAN_PRIVATE_KEY, 
+        amount: amount * 100, // السعر بالسنتيم
+        currency: "MAD",
+        order_id: data.inquiryId, 
+        customer: {
+            name: data.clientName,
+            email: data.clientEmail,
+            phone: data.clientPhone
+        },
+        metadata: {
+            course: data.selectedCourse,
+            qualification: data.qualification,
+            experience: data.experience,
+            inquiryId: data.inquiryId
+        },
+        redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
+        error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
+    }, {
         headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         }
     });
 
-    if (!youcanResponse.data || !youcanResponse.data.token_id) {
-        console.error('YouCanPay Tokenize Error:', youcanResponse.data);
-        throw new Error(youcanResponse.data.message || 'Failed to tokenize payment');
+    if (!tokenResponse.data || !tokenResponse.data.token) {
+        console.error('YouCanPay API Error:', tokenResponse.data);
+        throw new Error(tokenResponse.data.message || 'Failed to create YouCanPay token');
     }
 
-    const tokenId = youcanResponse.data.token_id;
+    const tokenId = tokenResponse.data.token.id;
 
-    // --- 6. منطق التوجيه (بطاقة أو كاش بلوس) ---
-    if (paymentMethod === 'cashplus') {
-        // --- 6.أ: منطق كاش بلوس ---
-        const cashplusUrl = `${API_URL}/cashplus/init`;
-        const base64Keys = Buffer.from(`${YOUCAN_PUBLIC_KEY}:${YOUCAN_PRIVATE_KEY}`).toString('base64');
+    // --- !!! [المنطق الجديد: التحقق من طريقة الدفع] !!! ---
+    if (data.paymentMethod === 'cashplus') {
+        // --- 4.أ: منطق كاش بلوس ---
+
+        // --- !!! [إضافة سجل تتبع] !!! ---
+        const cashplusUrl = `${youcanApiBaseUrl}/cashplus/init`;
+        console.log(`[PAYMENT_DEBUG] Calling CashPlus API: ${cashplusUrl}`);
+        // --- نهاية الإضافة ---
         
         const cashplusResponse = await axios.post(cashplusUrl, {
             pub_key: YOUCAN_PUBLIC_KEY,
@@ -137,6 +157,7 @@ export default async (req, res) => {
             throw new Error(cashplusResponse.data.message || 'Failed to initialize CashPlus payment');
         }
 
+        // إرجاع كود كاش بلوس
         res.status(200).json({ 
             result: 'success', 
             paymentMethod: 'cashplus',
@@ -144,18 +165,19 @@ export default async (req, res) => {
         });
 
     } else {
-        // --- 6.ب: منطق البطاقة البنكية ---
-        const paymentUrl = `${API_URL}/checkout?token_id=${tokenId}`;
+        // --- 4.ب: منطق البطاقة البنكية (الافتراضي) ---
+        // إرجاع "Token ID" إلى الواجهة الأمامية لإعادة التوجيه
         res.status(200).json({ 
             result: 'success', 
             paymentMethod: 'credit_card',
-            payment_url: paymentUrl // إرسال رابط الدفع
+            tokenId: tokenId 
         });
     }
+    // --- نهاية المنطق الجديد ---
 
   } catch (error) {
     const errorData = error.response ? error.response.data : error.message;
     console.error('Payment Initialization Error:', errorData);
-    res.status(500).json({ result: 'error', message: errorData.message || 'Internal Server Error' });
+    res.status(500).json({ result: 'error', message: 'Internal Server Error', details: errorData });
   }
 };
