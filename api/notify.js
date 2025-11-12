@@ -151,7 +151,9 @@ export default async (req, res) => {
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
       transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'),
-      paymentMethod: data.method ? (data.paymentMethod || ''),
+      paymentMethod: isWebhook ? data.method : (data.paymentMethod || ''),
+      paymentMethod: data.method || '',
+
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
