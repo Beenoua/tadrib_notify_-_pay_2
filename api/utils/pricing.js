@@ -1,11 +1,8 @@
 // --- ملف جديد: utils/pricing.js ---
-// هذا الملف هو "مصدر الحقيقة الوحيد" لأسعار الدورات والخصومات.
-// يجب أن يتم استيراده من قبل payment.js و send-code-email.js.
+// [تصحيح]: تمت إعادة كتابته بالكامل لاستخدام (ESM) بدلاً من (CJS)
 
-// [تعديل] استخدام `module.exports` بدلاً من `export` لضمان التوافق مع `require`
-// (بما أن payment.js يستخدم `require`)
-
-const courseData = {
+// تصدير المتغيرات مباشرة
+export const courseData = {
     pmp: { originalPrice: 2800 },
     planning: { originalPrice: 2800 },
     qse: { originalPrice: 2450 },
@@ -13,14 +10,14 @@ const courseData = {
     other: { originalPrice: 199 } // سعر "استفسار عام" (إذا تم تفعيله مستقبلاً)
 };
 
-const discountPercentage = 35; // نسبة الخصم
+export const discountPercentage = 35; // نسبة الخصم
 
 /**
  * دالة مركزية لحساب السعر المخفض.
  * @param {string} courseKey - مفتاح الدورة (مثل 'pmp').
  * @returns {number} - السعر النهائي بعد الخصم.
  */
-function calculateDiscountedPrice(courseKey) {
+export function calculateDiscountedPrice(courseKey) {
     // التأكد من أن المفتاح موجود، وإلا استخدم 'other' كاحتياط
     const key = (courseKey && courseData[courseKey]) ? courseKey : 'other';
     
@@ -32,9 +29,4 @@ function calculateDiscountedPrice(courseKey) {
     return discountedPrice;
 }
 
-// تصدير الوحدات لتكون متاحة لـ require
-module.exports = {
-    courseData,
-    discountPercentage,
-    calculateDiscountedPrice
-};
+// ليس مطلوباً تصدير افتراضي، سيتم استيراد الدوال بالاسم
