@@ -1,8 +1,9 @@
-// --- تم التعديل: استخدام 'require' بدلاً من 'import'
-const axios = require('axios');
-const { Buffer } = require('buffer');
-// [حل المشكلة 2]: استيراد الأسعار من المصدر الوحيد
-const { calculateDiscountedPrice } = require('./utils/pricing'); 
+// --- [تصحيح]: تمت إعادة كتابته بالكامل لاستخدام (ESM) بدلاً من (CJS) ---
+import axios from 'axios';
+import { Buffer } from 'buffer';
+// [حل المشكلة 2]: استيراد الأسعار من المصدر الوحيد (باستخدام ESM)
+// ملاحظة: Vercel تتطلب غالباً الامتداد .js في الاستيراد
+import { calculateDiscountedPrice } from './utils/pricing.js'; 
 
 // 2. إعدادات الأمان (يتم قراءتها داخل الدالة)
 
