@@ -167,7 +167,7 @@ export default async (req, res) => {
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-      "Payment Status", "Transaction ID" 
+      "Payment Status", "Transaction ID", "Payment Method"
     ];
 
     await sheet.loadHeaderRow(); 
