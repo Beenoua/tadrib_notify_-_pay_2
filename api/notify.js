@@ -210,7 +210,7 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
-${t.method} ${sanitizeTelegramHTML(normalizedData.paymentSmethod)}
+${t.method} ${sanitizeTelegramHTML(normalizedData.paymentmethod)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
