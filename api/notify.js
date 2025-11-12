@@ -24,7 +24,8 @@ const telegramTranslations = {
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
     time: "<b>الوقت:</b>",
-    status: "<b>الحالة:</b>", 
+    status: "<b>الحالة:</b>",
+    method: "<b>طريقة الدفع:</b>",  
     tx_id: "<b>رقم المعاملة:</b>",
     req_id: "<b>معرف الطلب:</b>"
   
@@ -39,6 +40,7 @@ const telegramTranslations = {
     email: "<b>E-mail:</b>",
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
+    method: "<b>Mode de paiement:</b>", 
     tx_id: "<b>ID Transaction:</b>",
     req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
   },
@@ -51,7 +53,8 @@ const telegramTranslations = {
     phone: "<b>Phone:</b>",
     email: "<b>Email:</b>",
     time: "<b>Time:</b>",
-    status: "<b>Status:</b>", 
+    status: "<b>Status:</b>",
+    method: "<b>Payment Method:</b>", 
     tx_id: "<b>Transaction ID:</b>",
     req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
   }
@@ -147,7 +150,9 @@ export default async (req, res) => {
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
+      paymentmethod: metadata.payment_method || 'N/A',
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'),
+      
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
@@ -185,8 +190,10 @@ export default async (req, res) => {
       "utm_campaign": normalizedData.utm_campaign,
       "utm_term": normalizedData.utm_term, 
       "utm_content": normalizedData.utm_content,
-      "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId 
+      "Payment Status": normalizedData.paymentStatus,
+      "Payment Method": normalizedData.paymentmethod,
+      "Transaction ID": normalizedData.transactionId,
+      
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
@@ -205,6 +212,7 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
+${t.method} ${sanitizeTelegramHTML(normalizedData.paymentmethod)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
