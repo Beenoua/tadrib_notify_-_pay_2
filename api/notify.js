@@ -25,7 +25,7 @@ const telegramTranslations = {
     email: "<b>الإيميل:</b>",
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>",
-    method: "<b>طريقة الدفع:</b>",  
+    payment_method: "<b>طريقة الدفع:</b>",  
     tx_id: "<b>رقم المعاملة:</b>",
     req_id: "<b>معرف الطلب:</b>"
   
@@ -40,7 +40,7 @@ const telegramTranslations = {
     email: "<b>E-mail:</b>",
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
-    method: "<b>Mode de paiement:</b>", 
+    payment_method: "<b>Mode de paiement:</b>", 
     tx_id: "<b>ID Transaction:</b>",
     req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
   },
@@ -54,7 +54,7 @@ const telegramTranslations = {
     email: "<b>Email:</b>",
     time: "<b>Time:</b>",
     status: "<b>Status:</b>",
-    method: "<b>Payment Method:</b>", 
+    payment_method: "<b>Payment Method:</b>", 
     tx_id: "<b>Transaction ID:</b>",
     req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
   }
@@ -212,7 +212,7 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
-${t.method} ${sanitizeTelegramHTML(normalizedData.paymentmethod)}
+${t.payment_method} ${sanitizeTelegramHTML(normalizedData.paymentmethod)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
