@@ -218,12 +218,6 @@ export default async (req, res) => {
       "utm_campaign": metadata.utm_campaign || '',
       "utm_term": metadata.utm_term || '',
       "utm_content": metadata.utm_content || '',
-      
-      // الأعمدة الجديدة التي طلبتها
-      "Status": "Paid", // الحالة دائماً "Paid"
-      "Payment Method": paymentMethod,
-      "Transaction ID": transactionId,
-      "CashPlus Code": cashplusCode
     };
 
     // 5. إضافة الصف إلى Google Sheets
