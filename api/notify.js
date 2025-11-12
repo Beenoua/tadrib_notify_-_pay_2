@@ -6,17 +6,18 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 // 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY; 
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // 3. تهيئة الخدمات
-let doc; 
+let doc;
+let bot; // سيتم تهيئة البوت عند الحاجة
 
-// --- [إصلاح] ترجمات التيليغرام (استخدام HTML) ---
+// --- [تصحيح]: كائن الترجمات الكامل لجميع اللغات والحقول ---
 const telegramTranslations = {
   ar: {
-    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
+    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳",
     course: "<b>الدورة:</b>",
     qualification: "<b>المؤهل:</b>",
     experience: "<b>الخبرة:</b>",
@@ -24,26 +25,29 @@ const telegramTranslations = {
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
     time: "<b>الوقت:</b>",
-    status: "<b>الحالة:</b>", 
-    tx_id: "<b>رقم المعاملة:</b>",
+    status: "<b>الحالة:</b>",
+    payment_method: "<b>طريقة الدفع:</b>",
+    tx_id: "<b>معرف العملية (TID):</b>",
+    cashplus_code: "<b>كود كاش بلوس:</b>",
     req_id: "<b>معرف الطلب:</b>"
-  
   },
   fr: {
-    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
+    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳",
     course: "<b>Formation:</b>",
     qualification: "<b>Qualification:</b>",
     experience: "<b>Expérience:</b>",
     name: "<b>Nom:</b>",
     phone: "<b>Téléphone:</b>",
-    email: "<b>E-mail:</b>",
+    email: "<b>Email:</b>",
     time: "<b>Heure:</b>",
-    status: "<b>Statut:</b>", 
-    tx_id: "<b>ID Transaction:</b>",
-    req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
+    status: "<b>Statut:</b>",
+    payment_method: "<b>Méthode:</b>",
+    tx_id: "<b>ID Transaction (TID):</b>",
+    cashplus_code: "<b>Code CashPlus:</b>",
+    req_id: "<b>ID Demande:</b>"
   },
   en: {
-    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
+    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
     course: "<b>Course:</b>",
     qualification: "<b>Qualification:</b>",
     experience: "<b>Experience:</b>",
@@ -51,185 +55,199 @@ const telegramTranslations = {
     phone: "<b>Phone:</b>",
     email: "<b>Email:</b>",
     time: "<b>Time:</b>",
-    status: "<b>Status:</b>", 
-    tx_id: "<b>Transaction ID:</b>",
-    req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
+    status: "<b>Status:</b>",
+    payment_method: "<b>Method:</b>",
+    tx_id: "<b>Transaction ID (TID):</b>",
+    cashplus_code: "<b>CashPlus Code:</b>",
+    req_id: "<b>Request ID:</b>"
   }
 };
-// --- نهاية الإصلاح ---
+// --- [نهاية التصحيح] ---
 
 /**
- * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
- * هذه الدالة تضمن عدم كسر تنسيق HTML
+ * دالة المصادقة مع Google Sheets
+ */
+async function initGoogleSheet() {
+  if (doc) return doc; // إذا تم تهيئته من قبل
+
+  const serviceAccountAuth = new JWT({
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
+  await doc.loadInfo();
+  return doc;
+}
+
+/**
+ * دالة تهيئة وإرسال رسالة تيليغرام
+ */
+async function sendTelegramNotification(data, lang) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.warn('Telegram ENVs not set. Skipping notification.');
+    return;
+  }
+
+  try {
+    if (!bot) {
+      bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
+    }
+
+    // الافتراضي هو 'fr' إذا كانت اللغة غير مدعومة أو غير موجودة
+    const t = telegramTranslations[lang] || telegramTranslations['fr'];
+
+    // بناء الرسالة لتشمل كل البيانات الجديدة
+    // استخدام t.tx_id و t.payment_method إلخ. التي تم إصلاحها
+    const message = `
+${t.title}
+-----------------------------------
+${t.course} ${sanitizeTelegramHTML(data.course_name)}
+${t.qualification} ${sanitizeTelegramHTML(data.qualification)}
+${t.experience} ${sanitizeTelegramHTML(data.experience)}
+-----------------------------------
+${t.name} ${sanitizeTelegramHTML(data.client_name)}
+${t.phone} ${sanitizeTelegramHTML(data.client_phone)}
+${t.email} ${sanitizeTelegramHTML(data.client_email)}
+-----------------------------------
+${t.status} <b>${data.status}</b>
+${t.payment_method} ${sanitizeTelegramHTML(data.payment_method)}
+${data.transactionId ? `${t.tx_id} <code>${sanitizeTelegramHTML(data.transactionId)}</code>` : ''}
+${data.cashplusCode ? `${t.cashplus_code} <code>${sanitizeTelegramHTML(data.cashplusCode)}</code>` : ''}
+-----------------------------------
+${t.req_id} ${sanitizeTelegramHTML(data.inquiry_id)}
+${t.time} ${new Date(data.timestamp).toLocaleString('fr-CA')}
+    `;
+
+    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.error('Failed to send Telegram message:', error.message);
+    // إرسال خطأ بسيط إذا فشل الإرسال المعقد
+    await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في إرسال إشعار الدفع للطلب: ${data.inquiry_id}`);
+  }
+}
+
+// --- [تصحيح]: استخدام دالة التنظيف الآمنة التي أشرت إليها ---
+/**
+ * تنظيف النص لإرساله بأمان في HTML (لـ Telegram)
  * @param {string} text النص المراد تنظيفه
  * @returns {string} نص آمن للإرسال
  */
 function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string') {
-    return text;
+    return text; // أعد القيمة (مثل رقم أو undefined) كما هي
   }
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
-
-
-/**
- * دالة المصادقة مع Google Sheets
- */
-async function authGoogleSheets() {
-  const serviceAccountAuth = new JWT({
-    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), 
-    scopes: [
-      'https://www.googleapis.com/auth/spreadsheets',
-    ],
-  });
-
-  doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
-  await doc.loadInfo(); // تحميل معلومات الملف
-}
+// --- [نهاية التصحيح] ---
 
 /**
- * هذه هي الدالة الرئيسية التي تستقبل الطلبات
+ * الدالة الرئيسية التي تستقبل الـ Webhook
  */
 export default async (req, res) => {
-  
-  // --- إعدادات CORS ---
-  const allowedOrigins = [
-    'https://tadrib.ma', 
-    'https://tadrib.jaouadouarh.com', 
-    'https://tadrib-cash.jaouadouarh.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:5500',
-    'http://127.0.0.1:5501'
-  ];
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-
+  // السماح بالطلبات (CORS)
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'Method Not Allowed' });
-  }
-
-  let bot; 
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   try {
-    bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
-    const data = req.body; 
-    
-    const lang = (data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang)) ? data.currentLang : 'fr';
-    const t = telegramTranslations[lang];
+    const payload = req.body;
 
-    const isWebhook = data.metadata && data.customer;
+    // 1. التحقق من الحدث
+    if (payload.event_name !== 'payment.succeeded') {
+      return res.status(200).send('Event ignored (not payment.succeeded)');
+    }
 
-    const normalizedData = {
-      timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
-      clientName: isWebhook ? data.customer.name : data.clientName,
-      clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-      clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
-      selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
-      qualification: isWebhook ? data.metadata.qualification : data.qualification,
-      experience: isWebhook ? data.metadata.experience : data.experience,
-      utm_source: data.utm_source || '',
-      utm_medium: data.utm_medium || '',
-      utm_campaign: data.utm_campaign || '',
-      utm_term: data.utm_term || '', 
-      utm_content: data.utm_content || '',
-      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
+    // 2. استخراج البيانات من Metadata
+    const metadata = payload.data?.metadata;
+    if (!metadata || !metadata.inquiry_id) {
+      console.warn('Webhook received without metadata or inquiry_id');
+      return res.status(400).send('Missing metadata');
+    }
+
+    // 3. استخراج معرف المحادثة (Transaction ID) وكود كاش بلوس
+    let transactionId = '';
+    let cashplusCode = '';
+    const paymentMethod = metadata.payment_method || 'Unknown';
+
+    if (paymentMethod === 'Credit Card' && payload.data?.transaction_id) {
+        transactionId = payload.data.transaction_id;
+    } else if (paymentMethod === 'CashPlus' && payload.data?.cashplus_code) {
+        cashplusCode = payload.data.cashplus_code; 
+    }
+
+    // 4. الاتصال بـ Google Sheets
+    const doc = await initGoogleSheet();
+    // استخدام اسم الورقة "Leads" كما في كود doPost الذي أرسلته
+    const sheet = doc.sheetsByTitle['Leads']; 
+
+    // 5. تجهيز "الصف الجديد" (بناءً على الأعمدة في doPost + الإضافات)
+    const timestamp = new Date().toISOString();
+    const newRow = {
+      // الأعمدة الأساسية من doPost
+      "Timestamp": timestamp,
+      "Inquiry ID": metadata.inquiry_id || '',
+      "Full Name": metadata.client_name || '',
+      "Email": metadata.client_email || '',
+      "Phone Number": metadata.client_phone || '',
+      "Selected Course": metadata.course_name || '',
+      "Qualification": metadata.qualification || '',
+      "Experience": metadata.experience || '',
+      // الأعمدة الجديدة التي طلبتها
+      "Status": "Paid", // الحالة دائماً "Paid"
+      "Payment Method": paymentMethod,
+      "Transaction ID": transactionId,
+      "CashPlus Code": cashplusCode,
+      
+      // أعمدة UTM (إذا تم تمريرها)
+      "utm_source": metadata.utm_source || '',
+      "utm_medium": metadata.utm_medium || '',
+      "utm_campaign": metadata.utm_campaign || '',
+      "utm_term": metadata.utm_term || '',
+      "utm_content": metadata.utm_content || '',
+      
+      // الأعمدة الجديدة التي طلبتها
+      "Status": "Paid", // الحالة دائماً "Paid"
+      "Payment Method": paymentMethod,
+      "Transaction ID": transactionId,
+      "CashPlus Code": cashplusCode
     };
 
-    // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
-    await authGoogleSheets(); 
+    // 5. إضافة الصف إلى Google Sheets
+    await sheet.addRow(newRow);
+
+    // 6. إرسال إشعار التيليغرام
+    const reportData = {
+        ...metadata, // يحتوي على كل بيانات العميل (الاسم، الايميل، الخ)
+        status: "Paid",
+        transactionId: transactionId,
+        cashplusCode: cashplusCode,
+        timestamp: timestamp
+    };
     
-    let sheet = doc.sheetsByTitle["Leads"]; 
-    if (!sheet) {
-        sheet = await doc.addSheet({ title: "Leads" });
-    }
+    // محاولة قراءة اللغة من metadata (إذا أضفتها مستقبلاً)
+    // إذا لم تكن موجودة، سيستخدم الافتراضي 'fr'
+    const lang = metadata.lang || 'fr'; 
+    await sendTelegramNotification(reportData, lang);
 
-    const headers = [
-      "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
-      "Selected Course", "Qualification", "Experience",
-      "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-      "Payment Status", "Transaction ID" 
-    ];
-
-    await sheet.loadHeaderRow(); 
-
-    if (sheet.headerValues.length === 0) {
-        await sheet.setHeaderRow(headers);
-    }
-    
-    await sheet.addRow({
-      "Timestamp": normalizedData.timestamp,
-      "Inquiry ID": normalizedData.inquiryId,
-      "Full Name": normalizedData.clientName,
-      "Email": normalizedData.clientEmail,
-      "Phone Number": normalizedData.clientPhone,
-      "Selected Course": normalizedData.selectedCourse,
-      "Qualification": normalizedData.qualification,
-      "Experience": normalizedData.experience,
-      "utm_source": normalizedData.utm_source,
-      "utm_medium": normalizedData.utm_medium,
-      "utm_campaign": normalizedData.utm_campaign,
-      "utm_term": normalizedData.utm_term, 
-      "utm_content": normalizedData.utm_content,
-      "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId 
-    });
-
-    // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
-    
-    // --- !!! [الإصلاح: تنظيف البيانات لـ HTML] !!! ---
-    const message = `
-${t.title}
------------------------------------
-${t.course} ${sanitizeTelegramHTML(normalizedData.selectedCourse)}
-${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
-${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
------------------------------------
-${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
-${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
-${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
------------------------------------
-${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
-${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
-${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
-${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
-    `;
-    // --- !!! [نهاية الإصلاح] !!! ---
-    
-    // [تعديل] استخدام HTML
-    await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
-
-    res.status(200).json({ result: 'success', message: 'Data saved and notification sent.' });
+    console.log(`Successfully added paid record for inquiry: ${metadata.inquiry_id}`);
+    res.status(200).send('Webhook processed successfully: Row created');
 
   } catch (error) {
-    console.error('Error:', error);
-    
+    console.error('Webhook Error:', error.message);
+    // إرسال إشعار خطأ إلى تيليغرام إذا فشل كل شيء
     try {
-      if (!bot) {
-        bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
-      }
-      // إرسال رسالة خطأ بسيطة بدون تنسيق لضمان وصولها
-      await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في نظام الحجز:\n${error.message}`);
+        if (!bot) bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
+        await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ خطأ فادح في Webhook: ${error.message}`);
     } catch (telegramError) {
-      console.error('CRITICAL: Failed to send error to Telegram:', telegramError);
+        console.error('Failed to send error message to Telegram:', telegramError.message);
     }
-    
-    res.status(500).json({ result: 'error', message: 'Internal Server Error' });
+    res.status(500).send('Internal Server Error');
   }
 };
-
-
