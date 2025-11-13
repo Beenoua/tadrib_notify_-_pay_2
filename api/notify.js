@@ -227,7 +227,7 @@ export default async (req, res) => {
       "utm_source": normalizedData.utm_source,
       "utm_medium": normalizedData.utm_medium,
       "utm_campaign": normalizedData.utm_campaign,
-      "utm_term": normalizedData.term, // خطأ مطبعي تم إصلاحه
+      "utm_term": normalizedData.utm_term, // [!!] إصلاح خطأ مطبعي كان هنا
       "utm_content": normalizedData.utm_content,
       "Payment Status": normalizedData.paymentStatus, 
       "Transaction ID": normalizedData.transactionId,
