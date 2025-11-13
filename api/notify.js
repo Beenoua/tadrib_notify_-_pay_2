@@ -143,7 +143,7 @@ export default async (req, res) => {
         // نقرأ الآن من الـ metadata التي قمنا بحفظها في payment.js
         paymentMethod = data.metadata.payment_method || 'Unknown (Webhook)';
         
-        // (الويب هوك لا يرسل كود كاش بلوس، لذلك سيبقى N/A)
+        // الويب هوك لا يرسل كود كاش بلوس، لذلك سيبقى N/A
         // (لكن إذا أرسله YouCanPay في المستقبل، سنسجله)
         if (data.cashplus_code && data.cashplus_code !== 'N/A') { 
             cashplusCode = data.cashplus_code;
