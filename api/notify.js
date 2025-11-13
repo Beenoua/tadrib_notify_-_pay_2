@@ -26,7 +26,11 @@ const telegramTranslations = {
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
-    req_id: "<b>معرف الطلب:</b>"
+    req_id: "<b>معرف الطلب:</b>",
+    // --- [إضافة] ---
+    payment_method: "<b>طريقة الدفع:</b>",
+    cashplus_code: "<b>كود كاش بلوس:</b>"
+    // --- [نهاية الإضافة] ---
   
   },
   fr: {
@@ -40,7 +44,12 @@ const telegramTranslations = {
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
     tx_id: "<b>ID Transaction:</b>",
-    req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
+    req_id: "<b>ID de requête:</b>",
+    // --- [إضافة] ---
+    payment_method: "<b>Méthode:</b>",
+    cashplus_code: "<b>Code CashPlus:</b>"
+    // --- [نهاية الإضافة] ---
+    
   },
   en: {
     title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
@@ -53,7 +62,11 @@ const telegramTranslations = {
     time: "<b>Time:</b>",
     status: "<b>Status:</b>", 
     tx_id: "<b>Transaction ID:</b>",
-    req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
+    req_id: "<b>Request ID:</b>",
+    // --- [إضافة] ---
+    payment_method: "<b>Method:</b>",
+    cashplus_code: "<b>CashPlus Code:</b>"
+    // --- [نهاية الإضافة] ---
   }
 };
 // --- نهاية الإصلاح ---
@@ -147,7 +160,13 @@ export default async (req, res) => {
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'),
+      // --- [إضافة] ---
+      // جلب طريقة الدفع: من الميتاداتا (للـ webhook) أو تعيينها يدوياً (للإشعار المعلق)
+      paymentMethod: (isWebhook ? data.metadata.paymentMethod : (data.paymentStatus === 'pending_cashplus' ? 'CashPlus' : 'N/A')),
+      // جلب كود كاش بلوس: (يأتي فقط من الإشعار المعلق، وليس من الـ webhook)
+      cashplusCode: data.cashplusCode || 'N/A' 
+      // --- [نهاية الإضافة] ---
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
@@ -162,7 +181,10 @@ export default async (req, res) => {
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-      "Payment Status", "Transaction ID" 
+      "Payment Status", "Transaction ID",
+      // --- [إضافة] ---
+      "Payment Method", "CashPlus Code"
+      // --- [نهاية الإضافة] ---
     ];
 
     await sheet.loadHeaderRow(); 
@@ -186,7 +208,11 @@ export default async (req, res) => {
       "utm_term": normalizedData.utm_term, 
       "utm_content": normalizedData.utm_content,
       "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId 
+      "Transaction ID": normalizedData.transactionId,
+      // --- [إضافة] ---
+      "Payment Method": normalizedData.paymentMethod,
+      "CashPlus Code": normalizedData.cashplusCode
+      // --- [نهاية الإضافة] ---
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
@@ -207,6 +233,10 @@ ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
+${/* --- [إضافة] --- */''}
+${(normalizedData.paymentMethod && normalizedData.paymentMethod !== 'N/A') ? `\n${t.payment_method} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}` : ''}
+${(normalizedData.cashplusCode && normalizedData.cashplusCode !== 'N/A') ? `\n${t.cashplus_code} <b>${sanitizeTelegramHTML(normalizedData.cashplusCode)}</b>` : ''}
+    ${/* --- [نهاية الإضافة] --- */''}
     `;
     // --- !!! [نهاية الإصلاح] !!! ---
     
@@ -231,3 +261,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
+
