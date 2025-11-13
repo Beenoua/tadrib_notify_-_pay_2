@@ -82,8 +82,35 @@ export default async (req, res) => {
     const originalPrice = courseData[courseKey].originalPrice;
     const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
 
+    // --- [تحديث] ---
+    // 2. تجميع كل البيانات في كائن واحد
+    const allDataForPayload = {
+        // بيانات العميل
+        clientName: data.clientName,
+        clientEmail: data.clientEmail,
+        clientPhone: data.clientPhone,
+        
+        // بيانات الحجز
+        inquiryId: data.inquiryId,
+        courseKey: data.courseKey,
+        courseText: data.courseText,
+        qualKey: data.qualKey,
+        qualText: data.qualText,
+        expKey: data.expKey,
+        expText: data.expText,
+        
+        // بيانات التتبع
+        lang: data.lang,
+        paymentMethod: data.paymentMethod, // <-- [مهم] إضافة طريقة الدفع
+        utm_source: data.utm_source || null,
+        utm_medium: data.utm_medium || null,
+        utm_campaign: data.utm_campaign || null,
+        utm_term: data.utm_term || null,
+        utm_content: data.utm_content || null
+    };
+    // --- [نهاية التحديث] ---
 
-    // 2. تهيئة YouCanPay
+    // 3. تهيئة YouCanPay
     const keys = `${YOUCAN_PUBLIC_KEY}:${YOUCAN_PRIVATE_KEY}`;
     const base64Keys = Buffer.from(keys).toString('base64');
     
@@ -99,7 +126,7 @@ export default async (req, res) => {
     console.log(`[PAYMENT_DEBUG] Calling Tokenize API: ${tokenizeUrl}`);
     // --- نهاية الإضافة ---
 
-    // 3. إنشاء "Token" الأولي (مشترك لكل الطرق)
+    // 4. إنشاء "Token" الأولي (مشترك لكل الطرق)
     const tokenResponse = await axios.post(tokenizeUrl, {
         pri_key: YOUCAN_PRIVATE_KEY, 
         amount: amount * 100, // السعر بالسنتيم
@@ -110,12 +137,12 @@ export default async (req, res) => {
             email: data.clientEmail,
             phone: data.clientPhone
         },
+        // --- [تحديث] ---
         metadata: {
-            course: data.selectedCourse,
-            qualification: data.qualification,
-            experience: data.experience,
-            inquiryId: data.inquiryId
+            // ضغط كل البيانات في حقل واحد كـ JSON
+            payload: JSON.stringify(allDataForPayload)
         },
+        // --- [نهاية التحديث] ---
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
@@ -134,7 +161,7 @@ export default async (req, res) => {
 
     // --- !!! [المنطق الجديد: التحقق من طريقة الدفع] !!! ---
     if (data.paymentMethod === 'cashplus') {
-        // --- 4.أ: منطق كاش بلوس ---
+        // --- 5.أ: منطق كاش بلوس ---
 
         // --- !!! [إضافة سجل تتبع] !!! ---
         const cashplusUrl = `${youcanApiBaseUrl}/cashplus/init`;
@@ -165,7 +192,7 @@ export default async (req, res) => {
         });
 
     } else {
-        // --- 4.ب: منطق البطاقة البنكية (الافتراضي) ---
+        // --- 5.ب: منطق البطاقة البنكية (الافتراضي) ---
         // إرجاع "Token ID" إلى الواجهة الأمامية لإعادة التوجيه
         res.status(200).json({ 
             result: 'success', 
