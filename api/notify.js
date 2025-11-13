@@ -27,10 +27,8 @@ const telegramTranslations = {
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
     req_id: "<b>معرف الطلب:</b>",
-    // --- [إضافة جديدة] ---
     payment_method: "<b>طريقة الدفع:</b>",
     cashplus_code: "<b>كود كاش بلوس:</b>"
-    // --- [نهاية الإضافة] ---
   },
   fr: {
     title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
@@ -44,10 +42,8 @@ const telegramTranslations = {
     status: "<b>Statut:</b>", 
     tx_id: "<b>ID Transaction:</b>",
     req_id: "<b>ID de requête:</b>",
-    // --- [إضافة جديدة] ---
     payment_method: "<b>Méthode:</b>",
     cashplus_code: "<b>Code CashPlus:</b>"
-    // --- [نهاية الإضافة] ---
   },
   en: {
     title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
@@ -61,10 +57,8 @@ const telegramTranslations = {
     status: "<b>Status:</b>", 
     tx_id: "<b>Transaction ID:</b>",
     req_id: "<b>Request ID:</b>",
-    // --- [إضافة جديدة] ---
     payment_method: "<b>Method:</b>",
     cashplus_code: "<b>CashPlus Code:</b>"
-    // --- [نهاية الإضافة] ---
   }
 };
 // --- نهاية الإصلاح ---
@@ -143,6 +137,30 @@ export default async (req, res) => {
 
     const isWebhook = data.metadata && data.customer;
 
+    // --- [!!! بداية المنطق الجديد لاكتشاف طريقة الدفع !!!] ---
+    let paymentMethod = 'N/A';
+    let cashplusCode = 'N/A';
+
+    if (isWebhook) {
+        // هذا طلب من الويب هوك (دفع ناجح أو فاشل)
+        if (data.status === 'paid') {
+            // نستنتج أن الدفع بالبطاقة أولاً
+            paymentMethod = 'Credit Card (Webhook)'; 
+            // إذا وجدنا كود كاش بلوس، نغير الافتراض
+            if (data.cashplus_code && data.cashplus_code !== 'N/A') { 
+                paymentMethod = 'CashPlus (Webhook)';
+                cashplusCode = data.cashplus_code;
+            }
+        } else {
+             paymentMethod = data.payment_method || 'N/A'; // لحالات الفشل إن وجدت
+        }
+    } else {
+        // هذا طلب مباشر من الواجهة (pending)
+        paymentMethod = data.paymentMethod || 'N/A';
+        cashplusCode = data.cashplusCode || 'N/A';
+    }
+    // --- [!!! نهاية المنطق الجديد !!!] ---
+
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
       inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
@@ -158,12 +176,12 @@ export default async (req, res) => {
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'),
-      // --- [إضافة جديدة] ---
-      // (نحاول قراءتها من الويب هوك أو من الطلب المباشر)
-      paymentMethod: isWebhook ? (data.payment_method || 'N/A') : (data.paymentMethod || 'N/A'),
-      cashplusCode: isWebhook ? (data.cashplus_code || 'N/A') : (data.cashplusCode || 'N/A')
-      // --- [نهاية الإضافة] ---
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'), 
+      
+      // --- [تعديل] استخدام المتغيرات الجديدة ---
+      paymentMethod: paymentMethod,
+      cashplusCode: cashplusCode
+      // --- [نهاية التعديل] ---
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
@@ -174,15 +192,13 @@ export default async (req, res) => {
         sheet = await doc.addSheet({ title: "Leads" });
     }
 
-    // --- [تعديل] إضافة الأعمدة الجديدة ---
     const headers = [
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
       "Payment Status", "Transaction ID",
-      "Payment Method", "CashPlus Code" // <-- تمت الإضافة
+      "Payment Method", "CashPlus Code" // <-- الأعمدة موجودة
     ];
-    // --- [نهاية التعديل] ---
 
     await sheet.loadHeaderRow(); 
 
@@ -190,7 +206,6 @@ export default async (req, res) => {
         await sheet.setHeaderRow(headers);
     }
     
-    // --- [تعديل] إضافة البيانات الجديدة للسطر ---
     await sheet.addRow({
       "Timestamp": normalizedData.timestamp,
       "Inquiry ID": normalizedData.inquiryId,
@@ -207,15 +222,12 @@ export default async (req, res) => {
       "utm_content": normalizedData.utm_content,
       "Payment Status": normalizedData.paymentStatus, 
       "Transaction ID": normalizedData.transactionId,
-      "Payment Method": normalizedData.paymentMethod, // <-- تمت الإضافة
-      "CashPlus Code": normalizedData.cashplusCode  // <-- تمت الإضافة
+      "Payment Method": normalizedData.paymentMethod, // <-- سيتم ملؤه
+      "CashPlus Code": normalizedData.cashplusCode  // <-- سيتم ملؤه
     });
-    // --- [نهاية التعديل] ---
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
     
-    // --- !!! [الإصلاح: تنظيف البيانات لـ HTML] !!! ---
-    // --- [تعديل] إضافة الحقول الجديدة للرسالة ---
     const message = `
 ${t.title}
 -----------------------------------
@@ -234,9 +246,7 @@ ${t.payment_method} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}
 ${(normalizedData.cashplusCode && normalizedData.cashplusCode !== 'N/A') ? `${t.cashplus_code} ${sanitizeTelegramHTML(normalizedData.cashplusCode)}\n` : ''}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
-    // --- !!! [نهاية الإصلاح والتعديل] !!! ---
     
-    // [تعديل] استخدام HTML
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
     res.status(200).json({ result: 'success', message: 'Data saved and notification sent.' });
@@ -248,7 +258,6 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
       if (!bot) {
         bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
       }
-      // إرسال رسالة خطأ بسيطة بدون تنسيق لضمان وصولها
       await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في نظام الحجز:\n${error.message}`);
     } catch (telegramError) {
       console.error('CRITICAL: Failed to send error to Telegram:', telegramError);
