@@ -137,29 +137,30 @@ export default async (req, res) => {
 
     const isWebhook = data.metadata && data.customer;
 
-    // --- [!!! بداية المنطق الجديد لاكتشاف طريقة الدفع !!!] ---
+    // --- [!!! هذا هو المنطق الذكي الذي يحل مشكلتك !!!] ---
     let paymentMethod = 'N/A';
     let cashplusCode = 'N/A';
 
     if (isWebhook) {
         // هذا طلب من الويب هوك (دفع ناجح أو فاشل)
         if (data.status === 'paid') {
-            // نستنتج أن الدفع بالبطاقة أولاً
-            paymentMethod = 'Credit Card (Webhook)'; 
-            // إذا وجدنا كود كاش بلوس، نغير الافتراض
+            // [الافتراض]: نفترض أن الدفع بالبطاقة أولاً
+            paymentMethod = 'Credit Card'; 
+            
+            // [الاستثناء]: إذا وجدنا كود كاش بلوس، نغير الافتراض
             if (data.cashplus_code && data.cashplus_code !== 'N/A') { 
-                paymentMethod = 'CashPlus (Webhook)';
+                paymentMethod = 'CashPlus';
                 cashplusCode = data.cashplus_code;
             }
         } else {
              paymentMethod = data.payment_method || 'N/A'; // لحالات الفشل إن وجدت
         }
     } else {
-        // هذا طلب مباشر من الواجهة (pending)
+        // هذا طلب مباشر من الواجهة (pending - خاص بكاش بلوس Sandbox)
         paymentMethod = data.paymentMethod || 'N/A';
         cashplusCode = data.cashplusCode || 'N/A';
     }
-    // --- [!!! نهاية المنطق الجديد !!!] ---
+    // --- [!!! نهاية المنطق الذكي !!!] ---
 
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
@@ -197,7 +198,7 @@ export default async (req, res) => {
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
       "Payment Status", "Transaction ID",
-      "Payment Method", "CashPlus Code" // <-- الأعمدة موجودة
+      "Payment Method", "CashPlus Code"
     ];
 
     await sheet.loadHeaderRow(); 
