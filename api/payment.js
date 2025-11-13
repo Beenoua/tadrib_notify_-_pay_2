@@ -90,14 +90,11 @@ export default async (req, res) => {
         clientEmail: data.clientEmail,
         clientPhone: data.clientPhone,
         
-        // بيانات الحجز
+       // [تعديل] استخدام الأسماء الموحدة
         inquiryId: data.inquiryId,
-        courseKey: data.courseKey,
-        courseText: data.courseText,
-        qualKey: data.qualKey,
-        qualText: data.qualText,
-        expKey: data.expKey,
-        expText: data.expText,
+        course: data.course,
+        qualification: data.qualification,
+        experience: data.experience,
         
         // بيانات التتبع
         lang: data.lang,
