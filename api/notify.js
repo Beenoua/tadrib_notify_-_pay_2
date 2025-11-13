@@ -26,9 +26,8 @@ const telegramTranslations = {
     time: "<b>الوقت:</b>",
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
-    req_id: "<b>معرف الطلب:</b>",
-    payment_method: "<b>طريقة الدفع:</b>",
-    cashplus_code: "<b>كود كاش بلوس:</b>"
+    req_id: "<b>معرف الطلب:</b>"
+  
   },
   fr: {
     title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
@@ -41,9 +40,7 @@ const telegramTranslations = {
     time: "<b>Heure:</b>",
     status: "<b>Statut:</b>", 
     tx_id: "<b>ID Transaction:</b>",
-    req_id: "<b>ID de requête:</b>",
-    payment_method: "<b>Méthode:</b>",
-    cashplus_code: "<b>Code CashPlus:</b>"
+    req_id: "<b>ID de requête:</b>" // <-- تمت الإضافة
   },
   en: {
     title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳", 
@@ -56,9 +53,7 @@ const telegramTranslations = {
     time: "<b>Time:</b>",
     status: "<b>Status:</b>", 
     tx_id: "<b>Transaction ID:</b>",
-    req_id: "<b>Request ID:</b>",
-    payment_method: "<b>Method:</b>",
-    cashplus_code: "<b>CashPlus Code:</b>"
+    req_id: "<b>Request ID:</b>" // <-- تمت الإضافة
   }
 };
 // --- نهاية الإصلاح ---
@@ -137,31 +132,6 @@ export default async (req, res) => {
 
     const isWebhook = data.metadata && data.customer;
 
-    // --- [!!! هذا هو المنطق الذكي الذي يحل مشكلتك !!!] ---
-    let paymentMethod = 'N/A';
-    let cashplusCode = 'N/A';
-
-    if (isWebhook) {
-        // هذا طلب من الويب هوك (دفع ناجح أو فاشل)
-        if (data.status === 'paid') {
-            // [الافتراض]: نفترض أن الدفع بالبطاقة أولاً
-            paymentMethod = 'Credit Card'; 
-            
-            // [الاستثناء]: إذا وجدنا كود كاش بلوس، نغير الافتراض
-            if (data.cashplus_code && data.cashplus_code !== 'N/A') { 
-                paymentMethod = 'CashPlus';
-                cashplusCode = data.cashplus_code;
-            }
-        } else {
-             paymentMethod = data.payment_method || 'N/A'; // لحالات الفشل إن وجدت
-        }
-    } else {
-        // هذا طلب مباشر من الواجهة (pending - خاص بكاش بلوس Sandbox)
-        paymentMethod = data.paymentMethod || 'N/A';
-        cashplusCode = data.cashplusCode || 'N/A';
-    }
-    // --- [!!! نهاية المنطق الذكي !!!] ---
-
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
       inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
@@ -177,12 +147,7 @@ export default async (req, res) => {
       utm_term: data.utm_term || '', 
       utm_content: data.utm_content || '',
       paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A'), 
-      
-      // --- [تعديل] استخدام المتغيرات الجديدة ---
-      paymentMethod: paymentMethod,
-      cashplusCode: cashplusCode
-      // --- [نهاية التعديل] ---
+      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
     };
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
@@ -197,8 +162,7 @@ export default async (req, res) => {
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-      "Payment Status", "Transaction ID",
-      "Payment Method", "CashPlus Code"
+      "Payment Status", "Transaction ID" 
     ];
 
     await sheet.loadHeaderRow(); 
@@ -222,13 +186,12 @@ export default async (req, res) => {
       "utm_term": normalizedData.utm_term, 
       "utm_content": normalizedData.utm_content,
       "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId,
-      "Payment Method": normalizedData.paymentMethod, // <-- سيتم ملؤه
-      "CashPlus Code": normalizedData.cashplusCode  // <-- سيتم ملؤه
+      "Transaction ID": normalizedData.transactionId 
     });
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
     
+    // --- !!! [الإصلاح: تنظيف البيانات لـ HTML] !!! ---
     const message = `
 ${t.title}
 -----------------------------------
@@ -243,11 +206,11 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
-${t.payment_method} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}
-${(normalizedData.cashplusCode && normalizedData.cashplusCode !== 'N/A') ? `${t.cashplus_code} ${sanitizeTelegramHTML(normalizedData.cashplusCode)}\n` : ''}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
+    // --- !!! [نهاية الإصلاح] !!! ---
     
+    // [تعديل] استخدام HTML
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
     res.status(200).json({ result: 'success', message: 'Data saved and notification sent.' });
@@ -259,6 +222,7 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
       if (!bot) {
         bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
       }
+      // إرسال رسالة خطأ بسيطة بدون تنسيق لضمان وصولها
       await bot.sendMessage(TELEGRAM_CHAT_ID, `❌ حدث خطأ في نظام الحجز:\n${error.message}`);
     } catch (telegramError) {
       console.error('CRITICAL: Failed to send error to Telegram:', telegramError);
