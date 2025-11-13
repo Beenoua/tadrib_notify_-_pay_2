@@ -114,7 +114,9 @@ export default async (req, res) => {
             course: data.selectedCourse,
             qualification: data.qualification,
             experience: data.experience,
-            inquiryId: data.inquiryId
+            inquiryId: data.inquiryId,
+            paymentMethod: data.paymentMethod // <-- [إضافة] تمرير طريقة الدفع إلى الميتاداتا
+
         },
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
