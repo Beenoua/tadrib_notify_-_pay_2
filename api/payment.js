@@ -110,12 +110,19 @@ export default async (req, res) => {
             email: data.clientEmail,
             phone: data.clientPhone
         },
+       // --- [!!! هذا هو التعديل المطلوب !!!] ---
+        // سنقوم بحقن طريقة الدفع في الـ metadata
+        // الـ Webhook سيعيد إلينا هذه الـ metadata
         metadata: {
             course: data.selectedCourse,
             qualification: data.qualification,
             experience: data.experience,
-            inquiryId: data.inquiryId
+            inquiryId: data.inquiryId,
+            // [!! تمت إضافة هذا السطر !!]
+            // (سيتم إرسال 'credit_card' أو 'cashplus' من الواجهة)
+            payment_method: data.paymentMethod 
         },
+        // --- [!!! نهاية التعديل !!!] ---
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
