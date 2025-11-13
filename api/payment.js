@@ -88,10 +88,10 @@ export default async (req, res) => {
             phone: data.clientPhone
         },
         
-        // --- !!! [هذا هو التعديل الجذري] !!! ---
-        // حقن كل البيانات التي سنحتاجها لاحقاً في الـ Webhook
+        // --- !!! [التعديل الجذري: حقن كل البيانات هنا] !!! ---
+        // سيتم إرجاع هذا الكائن (metadata) بالكامل مع الـ Webhook
         metadata: {
-            // بيانات العميل والحجز
+            // بيانات الحجز
             inquiryId: data.inquiryId,
             clientName: data.clientName,
             clientEmail: data.clientEmail,
@@ -100,12 +100,12 @@ export default async (req, res) => {
             qualification: data.qualification,
             experience: data.experience,
             
-            // بيانات الدفع
+            // بيانات الدفع (التي نعرفها الآن)
             paymentMethod: data.paymentMethod, // (credit_card أو cashplus)
-            amount: amount, // (المبلغ بالدرهم)
+            amount: amount.toString(), // (المبلغ بالدرهم)
             currency: "MAD",
 
-            // بيانات التتبع
+            // بيانات التتبع (UTM)
             utm_source: data.utm_source || '',
             utm_medium: data.utm_medium || '',
             utm_campaign: data.utm_campaign || '',
