@@ -3,12 +3,10 @@ import axios from 'axios';
 import { Buffer } from 'buffer'; // إضافة Buffer
 
 // 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
-// لا تقم بقراءة المتغيرات هنا في النطاق العام (Global Scope)
-// const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
-// const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
-// const YOUCAN_MODE = process.env.YOUCAN_MODE;
+// (الكود كما هو في ملفك الأصلي)
+// ...
 
-// إعدادات الدورات (يجب أن تكون الأسعار هنا في الخادم للأمان)
+// إعدادات الدورات (كما هي في ملفك الأصلي)
 const courseData = {
     pmp: { originalPrice: 2800 },
     planning: { originalPrice: 2800 },
@@ -24,16 +22,12 @@ const discountPercentage = 35; // نسبة الخصم
 export default async (req, res) => {
 
   // --- !!! [الإصلاح: قراءة المتغيرات داخل الدالة] !!! ---
-  // هذا يجبر Vercel على قراءة المتغيرات المحدثة مع كل طلب
   const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
   const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
   const YOUCAN_MODE = process.env.YOUCAN_MODE;
   
-  // --- !!! [إضافة سجل تتبع] !!! ---
-  console.log(`[PAYMENT_DEBUG] YOUCAN_MODE: ${YOUCAN_MODE}`);
-  // --- نهاية الإضافة ---
-
-  
+  // (كود CORS كما هو في ملفك الأصلي)
+  // ...
   // ===================================
   //           **إعدادات CORS**
   // ===================================
@@ -74,7 +68,8 @@ export default async (req, res) => {
   try {
     const data = req.body; 
 
-    // 1. التحقق من الدورة وحساب السعر (في الخادم)
+    // (حساب السعر كما هو في ملفك الأصلي)
+    // ...
     const courseKey = data.courseKey || 'other'; // افتراضي
     if (!courseData[courseKey]) {
         throw new Error('Course not found');
@@ -83,23 +78,16 @@ export default async (req, res) => {
     const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
 
 
-    // 2. تهيئة YouCanPay
+    // (تهيئة YouCanPay كما هي)
+    // ...
     const keys = `${YOUCAN_PUBLIC_KEY}:${YOUCAN_PRIVATE_KEY}`;
     const base64Keys = Buffer.from(keys).toString('base64');
-    
-    // --- =================================== ---
-    //           **تصحيح قراءة المتغير**
-    // --- =================================== ---
     const isSandbox = YOUCAN_MODE === 'sandbox';
     const youcanApiBaseUrl = isSandbox ? 'https://youcanpay.com/sandbox/api' : 'https://youcanpay.com/api';
-    // --- =================================== ---
 
-    // --- !!! [إضافة سجل تتبع] !!! ---
     const tokenizeUrl = `${youcanApiBaseUrl}/tokenize`;
-    console.log(`[PAYMENT_DEBUG] Calling Tokenize API: ${tokenizeUrl}`);
-    // --- نهاية الإضافة ---
-
-    // 3. إنشاء "Token" الأولي (مشترك لكل الطرق)
+    
+    // 3. إنشاء "Token" الأولي
     const tokenResponse = await axios.post(tokenizeUrl, {
         pri_key: YOUCAN_PRIVATE_KEY, 
         amount: amount * 100, // السعر بالسنتيم
@@ -110,7 +98,8 @@ export default async (req, res) => {
             email: data.clientEmail,
             phone: data.clientPhone
         },
-       // --- [!!! هذا هو التعديل المطلوب !!!] ---
+        
+        // --- [!!! هذا هو التعديل المطلوب !!!] ---
         // سنقوم بحقن طريقة الدفع في الـ metadata
         // الـ Webhook سيعيد إلينا هذه الـ metadata
         metadata: {
@@ -123,6 +112,7 @@ export default async (req, res) => {
             payment_method: data.paymentMethod 
         },
         // --- [!!! نهاية التعديل !!!] ---
+
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
@@ -139,14 +129,11 @@ export default async (req, res) => {
 
     const tokenId = tokenResponse.data.token.id;
 
-    // --- !!! [المنطق الجديد: التحقق من طريقة الدفع] !!! ---
+    // --- [المنطق الجديد: التحقق من طريقة الدفع] ---
     if (data.paymentMethod === 'cashplus') {
         // --- 4.أ: منطق كاش بلوس ---
-
-        // --- !!! [إضافة سجل تتبع] !!! ---
+        
         const cashplusUrl = `${youcanApiBaseUrl}/cashplus/init`;
-        console.log(`[PAYMENT_DEBUG] Calling CashPlus API: ${cashplusUrl}`);
-        // --- نهاية الإضافة ---
         
         const cashplusResponse = await axios.post(cashplusUrl, {
             pub_key: YOUCAN_PUBLIC_KEY,
