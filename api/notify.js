@@ -1,16 +1,14 @@
-// --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 
-// 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
+// --- إعدادات الأمان (يتم قراءتها من متغيرات البيئة) ---
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY; 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// 3. تهيئة الخدمات
 let doc; 
 
 // --- [إعادة بناء]: ترجمات التيليغرام الشاملة ---
@@ -19,20 +17,17 @@ const telegramTranslations = {
     title_paid: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
     title_pending: "⏳ <b>حجز معلق (CashPlus)</b> ⏳", 
     title_failed: "❌ <b>فشل عملية دفع (Tadrib.ma)</b> ❌",
-    // بيانات الحجز
     course: "<b>الدورة:</b>",
     qualification: "<b>المؤهل:</b>",
     experience: "<b>الخبرة:</b>",
     name: "<b>الاسم:</b>",
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
-    // بيانات الدفع
     amount: "<b>المبلغ:</b>",
     method: "<b>طريقة الدفع:</b>",
     cashplus_code: "<b>كود كاش بلوس:</b>",
     card_last_four: "<b>آخر 4 أرقام:</b>",
     fees: "<b>رسوم البوابة:</b>",
-    // بيانات التتبع
     status: "<b>الحالة:</b>", 
     tx_id: "<b>رقم المعاملة:</b>",
     req_id: "<b>معرف الطلب:</b>",
@@ -40,26 +35,25 @@ const telegramTranslations = {
     utm_source: "<b>المصدر (UTM):</b>",
     utm_medium: "<b>الوسيط (UTM):</b>",
     utm_campaign: "<b>الحملة (UTM):</b>",
+    utm_term: "<b>الكلمة (UTM):</b>",
+    utm_content: "<b>المحتوى (UTM):</b>",
     error_message: "<b>رسالة الخطأ:</b>"
   },
   fr: {
     title_paid: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
     title_pending: "⏳ <b>Réservation en attente (CashPlus)</b> ⏳",
     title_failed: "❌ <b>Échec de Paiement (Tadrib.ma)</b> ❌",
-    // بيانات الحجز
     course: "<b>Formation:</b>",
     qualification: "<b>Qualification:</b>",
     experience: "<b>Expérience:</b>",
     name: "<b>Nom:</b>",
     phone: "<b>Téléphone:</b>",
     email: "<b>E-mail:</b>",
-    // بيانات الدفع
     amount: "<b>Montant:</b>",
     method: "<b>Méthode:</b>",
     cashplus_code: "<b>Code CashPlus:</b>",
     card_last_four: "<b>4 derniers chiffres:</b>",
     fees: "<b>Frais de passerelle:</b>",
-    // بيانات التتبع
     status: "<b>Statut:</b>", 
     tx_id: "<b>ID Transaction:</b>",
     req_id: "<b>ID de requête:</b>",
@@ -67,15 +61,14 @@ const telegramTranslations = {
     utm_source: "<b>Source (UTM):</b>",
     utm_medium: "<b>Medium (UTM):</b>",
     utm_campaign: "<b>Campagne (UTM):</b>",
+    utm_term: "<b>Terme (UTM):</b>",
+    utm_content: "<b>Contenu (UTM):</b>",
     error_message: "<b>Message d'erreur:</b>"
-  },
-  // (يمكن إضافة الإنجليزية لاحقاً بنفس الطريقة)
+  }
 };
 // --- [نهاية إعادة البناء] ---
 
-/**
- * دالة تنظيف لـ HTML
- */
+// دالة تنظيف لـ HTML
 function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string' && typeof text !== 'number') {
     return text;
@@ -86,9 +79,7 @@ function sanitizeTelegramHTML(text) {
     .replace(/>/g, '&gt;');
 }
 
-/**
- * دالة المصادقة مع Google Sheets
- */
+// دالة المصادقة مع Google Sheets
 async function authGoogleSheets() {
   const serviceAccountAuth = new JWT({
     email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -99,11 +90,11 @@ async function authGoogleSheets() {
   });
 
   doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
-  await doc.loadInfo(); // تحميل معلومات الملف
+  await doc.loadInfo(); 
 }
 
 /**
- * هذه هي الدالة الرئيسية التي تستقبل الطلبات
+ * الدالة الرئيسية التي تستقبل الطلبات
  */
 export default async (req, res) => {
   
@@ -120,45 +111,46 @@ export default async (req, res) => {
   if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
-
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
 
   let bot; 
-  let lang = 'fr'; // لغة افتراضية للإشعارات
+  let lang = 'fr'; // لغة افتراضية
 
   try {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
     const data = req.body; 
     
     // --- [إعادة بناء]: منطق توحيد البيانات (Webhook أو Manual) ---
-
-    // (isWebhook = true) إذا كان الطلب من خادم YouCanPay (يحتوي على payload و metadata)
     const isWebhook = !!(data.payload && data.metadata && data.event_name); 
-    // (isManualSend = true) إذا كان الطلب يدوياً من script-cleaned-2.js (مثل pending_cashplus)
     const isManualSend = !!(data.paymentStatus && data.paymentStatus === 'pending_cashplus');
 
     let normalizedData = {};
-    let t = telegramTranslations[lang]; // التحميل المبدئي
+    let t; // --- [الحل لخطأ 'title_pending'] ---: لا تقم بتعريف (t) هنا
 
     if (isWebhook) {
         // --- المصدر 1: Webhook آلي (للبطاقة البنكية وكاش بلوس المدفوع) ---
+        
+        // 1. استخراج النص المضغوط من الـ Webhook
+        const allDataString = data.metadata.allData || "{}";
+        // 2. فك ضغط النص (تحويله إلى كائن)
+        const metadata = JSON.parse(allDataString);
+        
         const payload = data.payload || {};
         const transaction = payload.transaction || {};
-        const metadata = data.metadata || {};
+        
+        // [الحل لخطأ 'title_pending']: تعريف (t) هنا
         lang = (metadata.currentLang && ['ar', 'fr', 'en'].includes(metadata.currentLang)) ? metadata.currentLang : 'fr';
         t = telegramTranslations[lang];
 
         normalizedData = {
-          // بيانات الحجز (من Metadata التي حقناها)
           timestamp: new Date().toLocaleString('fr-CA'),
           inquiryId: metadata.inquiryId || payload.order_id || 'N/A',
           clientName: metadata.clientName || 'N/A',
@@ -167,19 +159,15 @@ export default async (req, res) => {
           selectedCourse: metadata.selectedCourse || 'N/A',
           qualification: metadata.qualification || 'N/A',
           experience: metadata.experience || 'N/A',
-          
-          // بيانات الدفع (من الـ Webhook)
-          paymentStatus: data.event_name || transaction.status || 'N/A', // مثل "transaction.success"
+          paymentStatus: data.event_name || transaction.status || 'N/A', 
           transactionId: transaction.id || 'N/A',
-          paymentMethod: metadata.paymentMethod || 'N/A', // (credit_card أو cashplus)
+          paymentMethod: metadata.paymentMethod || 'N/A', 
           cashplusCode: 'N/A', // الـ Webhook لا يرسله
-          amount: (payload.amount / 100) || metadata.amount || 'N/A', // Webhook يرسل بالسنتيم
+          amount: (payload.amount / 100) || metadata.amount || 'N/A', 
           currency: payload.currency || metadata.currency || 'MAD',
           cardLastFour: payload.card_last_four || 'N/A',
           gatewayFees: payload.fees || 'N/A',
           errorMessage: payload.message || (data.event_name === 'transaction.failed' ? 'Failed' : 'N/A'),
-
-          // بيانات التتبع (من Metadata)
           utm_source: metadata.utm_source || '',
           utm_medium: metadata.utm_medium || '',
           utm_campaign: metadata.utm_campaign || '',
@@ -189,11 +177,12 @@ export default async (req, res) => {
 
     } else if (isManualSend) {
         // --- المصدر 2: إشعار يدوي (فقط لـ Pending CashPlus) ---
+        
+        // [الحل لخطأ 'title_pending']: تعريف (t) هنا
         lang = (data.currentLang && ['ar', 'fr', 'en'].includes(data.currentLang)) ? data.currentLang : 'fr';
         t = telegramTranslations[lang];
 
         normalizedData = {
-          // بيانات الحجز (من الإشعار اليدوي)
           timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
           inquiryId: data.inquiryId,
           clientName: data.clientName,
@@ -202,8 +191,6 @@ export default async (req, res) => {
           selectedCourse: data.selectedCourse,
           qualification: data.qualification,
           experience: data.experience,
-          
-          // بيانات الدفع (من الإشعار اليدوي)
           paymentStatus: data.paymentStatus, // 'pending_cashplus'
           transactionId: 'N/A',
           paymentMethod: data.paymentMethod || 'CashPlus',
@@ -213,8 +200,6 @@ export default async (req, res) => {
           cardLastFour: 'N/A',
           gatewayFees: 'N/A',
           errorMessage: 'N/A',
-
-          // بيانات التتبع (من الإشعار اليدوي)
           utm_source: data.utm_source || '',
           utm_medium: data.utm_medium || '',
           utm_campaign: data.utm_campaign || '',
@@ -226,32 +211,26 @@ export default async (req, res) => {
         console.warn('Received unknown payload structure:', data);
         return res.status(400).json({ result: 'error', message: 'Unknown payload structure.' });
     }
-    
     // --- نهاية إعادة البناء ---
 
-
-    // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
+    // --- المهمة 1: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
-    
     let sheet = doc.sheetsByTitle["Leads"]; 
     if (!sheet) {
         sheet = await doc.addSheet({ title: "Leads" });
     }
 
-    // --- [إعادة بناء]: الأعمدة الشاملة ---
-    // (مطابقة للتي طلبتها + الإضافات من بوابة الدفع)
+    // --- [إعادة بناء]: الأعمدة الشاملة (حسب طلبك) ---
     const HEADERS = [
-      "Timestamp", "Inquiry ID", "Payment Status", "Transaction ID", 
-      "Full Name", "Email", "Phone Number", 
+      "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience",
-      "Payment Method", "CashPlus Code", 
+      "Payment Status", "Transaction ID", "Payment Method", "CashPlus Code",
       "Amount", "Currency", "Card Last Four", "Gateway Fees", "Error Message",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"
     ];
     // --- نهاية إعادة البناء ---
 
     await sheet.loadHeaderRow(); 
-
     if (sheet.headerValues.length === 0) {
         await sheet.setHeaderRow(HEADERS);
     }
@@ -260,14 +239,14 @@ export default async (req, res) => {
     await sheet.addRow({
       "Timestamp": normalizedData.timestamp,
       "Inquiry ID": normalizedData.inquiryId,
-      "Payment Status": normalizedData.paymentStatus, 
-      "Transaction ID": normalizedData.transactionId,
       "Full Name": normalizedData.clientName,
       "Email": normalizedData.clientEmail,
       "Phone Number": normalizedData.clientPhone,
       "Selected Course": normalizedData.selectedCourse,
       "Qualification": normalizedData.qualification,
       "Experience": normalizedData.experience,
+      "Payment Status": normalizedData.paymentStatus, 
+      "Transaction ID": normalizedData.transactionId,
       "Payment Method": normalizedData.paymentMethod,
       "CashPlus Code": normalizedData.cashplusCode,
       "Amount": normalizedData.amount,
@@ -283,9 +262,9 @@ export default async (req, res) => {
     });
     // --- نهاية إعادة البناء ---
 
-    // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
+    // --- المهمة 2: إرسال إشعار فوري عبر Telegram ---
     
-    // --- [إعادة بناء]: بناء الرسالة الشاملة ---
+    // [الحل لخطأ 'title_pending']: (t) الآن مُعرفة دائماً
     let title;
     if (normalizedData.paymentStatus === 'pending_cashplus') {
         title = t.title_pending;
@@ -295,10 +274,7 @@ export default async (req, res) => {
         title = t.title_failed;
     }
 
-    // بناء رسالة ديناميكية (فقط الحقول الموجودة)
     let message = `${title}\n-----------------------------------\n`;
-    
-    // (دالة مساعدة لإضافة سطر إذا كانت القيمة موجودة وليست 'N/A')
     const addLine = (key, value) => {
         if (value && value !== 'N/A' && value !== '') {
             message += `${sanitizeTelegramHTML(t[key])} ${sanitizeTelegramHTML(value)}\n`;
@@ -328,7 +304,8 @@ export default async (req, res) => {
     addLine('utm_source', normalizedData.utm_source);
     addLine('utm_medium', normalizedData.utm_medium);
     addLine('utm_campaign', normalizedData.utm_campaign);
-    // --- نهاية إعادة البناء ---
+    addLine('utm_term', normalizedData.utm_term);
+    addLine('utm_content', normalizedData.utm_content);
     
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
