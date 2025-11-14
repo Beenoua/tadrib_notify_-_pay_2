@@ -141,7 +141,8 @@ export default async (req, res) => {
 
       paymentMethod: data.payment_method || data.metadata?.paymentMethod || null,
       cashplusCode: data.cashplus?.code || null,
-      last4: data.card?.last4 || data.metadata?.card?.last4 || null,      amount: data.amount || data.metadata?.finalAmount || null,
+      last4: data.card?.last4 || null,
+      amount: data.amount || data.metadata?.finalAmount || null,
       currency: data.currency || "MAD",
       lang: lang,
 
@@ -184,7 +185,7 @@ export default async (req, res) => {
 
       "Payment Method": normalizedData.paymentMethod,
       "CashPlus Code": normalizedData.cashplusCode,
-      "Last4Digits": normalizedData.last4,
+      "Card Last 4": normalizedData.last4,
       "Amount": normalizedData.amount,
       "Currency": normalizedData.currency,
       "Lang": normalizedData.lang,
