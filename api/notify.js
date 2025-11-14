@@ -185,7 +185,7 @@ export default async (req, res) => {
 
       "Payment Method": normalizedData.paymentMethod,
       "CashPlus Code": normalizedData.cashplusCode,
-      "Card Last 4": normalizedData.last4,
+      "Last4Digits": normalizedData.last4,
       "Amount": normalizedData.amount,
       "Currency": normalizedData.currency,
       "Lang": normalizedData.lang,
@@ -233,4 +233,5 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ error: "Internal Error", details: error.message });
   }
 };
+
 
