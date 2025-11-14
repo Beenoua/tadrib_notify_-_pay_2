@@ -20,7 +20,7 @@ function sanitizeTelegramHTML(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-},
+}
 
 function normalizePhone(phone) {
   if (!phone) return null;
@@ -169,8 +169,7 @@ export default async (req, res) => {
 
       clientName: isWebhook ? data.customer.name : data.clientName,
       clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-     clientPhone: normalizePhone(
-   isWebhook ? data.customer.phone : data.clientPhone
+     clientPhone: normalizePhone( isWebhook ? data.customer.phone : data.clientPhone
 ),
 
 
@@ -272,4 +271,5 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ error: "Internal Error", details: error.message });
   }
 };
+
 
