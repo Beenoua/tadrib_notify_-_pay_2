@@ -111,11 +111,15 @@ export default async (req, res) => {
             phone: data.clientPhone
         },
         metadata: {
-            course: data.selectedCourse,
-            qualification: data.qualification,
-            experience: data.experience,
-            inquiryId: data.inquiryId
-        },
+    course: data.selectedCourse,
+    qualification: data.qualification,
+    experience: data.experience,
+    inquiryId: data.inquiryId,
+    paymentMethod: data.paymentMethod,       // NEW
+    lang: data.currentLang || 'fr',          // NEW
+    originalPrice: originalPrice,            // NEW
+    finalAmount: amount,                     // NEW
+},
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
