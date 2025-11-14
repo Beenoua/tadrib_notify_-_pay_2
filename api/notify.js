@@ -141,7 +141,7 @@ export default async (req, res) => {
 
       paymentMethod: data.payment_method || data.metadata?.paymentMethod || null,
       cashplusCode: data.cashplus?.code || null,
-      last4: data.card?.last4 || null,
+      last4: data.card?.last4 || data.metadata?.card?.last4 || null,
       amount: data.amount || data.metadata?.finalAmount || null,
       currency: data.currency || "MAD",
       lang: lang,
@@ -233,3 +233,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ error: "Internal Error", details: error.message });
   }
 };
+
