@@ -2,6 +2,12 @@
 import axios from 'axios';
 import { Buffer } from 'buffer'; // إضافة Buffer
 
+// 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
+// لا تقم بقراءة المتغيرات هنا في النطاق العام (Global Scope)
+// const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
+// const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
+// const YOUCAN_MODE = process.env.YOUCAN_MODE;
+
 // إعدادات الدورات (يجب أن تكون الأسعار هنا في الخادم للأمان)
 const courseData = {
     pmp: { originalPrice: 2800 },
@@ -17,12 +23,15 @@ const discountPercentage = 35; // نسبة الخصم
  */
 export default async (req, res) => {
 
-  // --- قراءة المتغيرات داخل الدالة ---
+  // --- !!! [الإصلاح: قراءة المتغيرات داخل الدالة] !!! ---
+  // هذا يجبر Vercel على قراءة المتغيرات المحدثة مع كل طلب
   const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY; 
   const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY; 
   const YOUCAN_MODE = process.env.YOUCAN_MODE;
   
+  // --- !!! [إضافة سجل تتبع] !!! ---
   console.log(`[PAYMENT_DEBUG] YOUCAN_MODE: ${YOUCAN_MODE}`);
+  // --- نهاية الإضافة ---
 
   
   // ===================================
@@ -71,48 +80,26 @@ export default async (req, res) => {
         throw new Error('Course not found');
     }
     const originalPrice = courseData[courseKey].originalPrice;
-    const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50; // هذا هو المبلغ بالدرهم
+    const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
 
-    // --- [***[FIX 1]***] ---
-    // 2. تجميع كل البيانات في كائن واحد بأسماء موحدة
-    const allDataForPayload = {
-        // بيانات العميل
-        clientName: data.clientName,
-        clientEmail: data.clientEmail,
-        clientPhone: data.clientPhone,
-        
-        // [تصحيح]: استخدام الأسماء الصحيحة القادمة من الواجهة
-        inquiryId: data.inquiryId,
-        courseText: data.selectedCourse,  // <-- كان 'course: data.course'
-        qualText: data.qualification,     // <-- كان 'qualification: data.qualification'
-        expText: data.experience,         // <-- كان 'experience: data.experience'
-        
-        // [إضافة]: حفظ المبلغ والعملة داخل الحزمة لضمان وصولها
-        amount: amount, // (المبلغ بالدرهم، مثلا 1800)
-        currency: "MAD",
 
-        // بيانات التتبع
-        lang: data.lang, // <-- يعتمد على الإضافة من script-cleaned-2.js
-        paymentMethod: data.paymentMethod, 
-        utm_source: data.utm_source || null,
-        utm_medium: data.utm_medium || null,
-        utm_campaign: data.utm_campaign || null,
-        utm_term: data.utm_term || null,
-        utm_content: data.utm_content || null
-    };
-    // --- [نهاية التحديث] ---
-
-    // 3. تهيئة YouCanPay
+    // 2. تهيئة YouCanPay
     const keys = `${YOUCAN_PUBLIC_KEY}:${YOUCAN_PRIVATE_KEY}`;
     const base64Keys = Buffer.from(keys).toString('base64');
     
+    // --- =================================== ---
+    //           **تصحيح قراءة المتغير**
+    // --- =================================== ---
     const isSandbox = YOUCAN_MODE === 'sandbox';
     const youcanApiBaseUrl = isSandbox ? 'https://youcanpay.com/sandbox/api' : 'https://youcanpay.com/api';
+    // --- =================================== ---
 
+    // --- !!! [إضافة سجل تتبع] !!! ---
     const tokenizeUrl = `${youcanApiBaseUrl}/tokenize`;
     console.log(`[PAYMENT_DEBUG] Calling Tokenize API: ${tokenizeUrl}`);
+    // --- نهاية الإضافة ---
 
-    // 4. إنشاء "Token" الأولي (مشترك لكل الطرق)
+    // 3. إنشاء "Token" الأولي (مشترك لكل الطرق)
     const tokenResponse = await axios.post(tokenizeUrl, {
         pri_key: YOUCAN_PRIVATE_KEY, 
         amount: amount * 100, // السعر بالسنتيم
@@ -123,12 +110,12 @@ export default async (req, res) => {
             email: data.clientEmail,
             phone: data.clientPhone
         },
-        // --- [تحديث] ---
         metadata: {
-            // ضغط كل البيانات في حقل واحد كـ JSON
-            payload: JSON.stringify(allDataForPayload)
+            course: data.selectedCourse,
+            qualification: data.qualification,
+            experience: data.experience,
+            inquiryId: data.inquiryId
         },
-        // --- [نهاية التحديث] ---
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
         error_url: `https://tadrib-cash.jaouadouarh.com#payment-failed`     
     }, {
@@ -145,10 +132,14 @@ export default async (req, res) => {
 
     const tokenId = tokenResponse.data.token.id;
 
+    // --- !!! [المنطق الجديد: التحقق من طريقة الدفع] !!! ---
     if (data.paymentMethod === 'cashplus') {
-        // --- 5.أ: منطق كاش بلوس ---
+        // --- 4.أ: منطق كاش بلوس ---
+
+        // --- !!! [إضافة سجل تتبع] !!! ---
         const cashplusUrl = `${youcanApiBaseUrl}/cashplus/init`;
         console.log(`[PAYMENT_DEBUG] Calling CashPlus API: ${cashplusUrl}`);
+        // --- نهاية الإضافة ---
         
         const cashplusResponse = await axios.post(cashplusUrl, {
             pub_key: YOUCAN_PUBLIC_KEY,
@@ -166,6 +157,7 @@ export default async (req, res) => {
             throw new Error(cashplusResponse.data.message || 'Failed to initialize CashPlus payment');
         }
 
+        // إرجاع كود كاش بلوس
         res.status(200).json({ 
             result: 'success', 
             paymentMethod: 'cashplus',
@@ -173,13 +165,15 @@ export default async (req, res) => {
         });
 
     } else {
-        // --- 5.ب: منطق البطاقة البنكية (الافتراضي) ---
+        // --- 4.ب: منطق البطاقة البنكية (الافتراضي) ---
+        // إرجاع "Token ID" إلى الواجهة الأمامية لإعادة التوجيه
         res.status(200).json({ 
             result: 'success', 
             paymentMethod: 'credit_card',
             tokenId: tokenId 
         });
     }
+    // --- نهاية المنطق الجديد ---
 
   } catch (error) {
     const errorData = error.response ? error.response.data : error.message;
