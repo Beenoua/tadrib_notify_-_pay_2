@@ -16,10 +16,10 @@ let doc;
 // --- [تحديث] ترجمات التيليغرام (استخدام HTML) ---
 const telegramTranslations = {
   ar: {
-    title: "✅ <b>حجز جديد (Tadrib.ma)</b>", 
+    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
     course: "<b>الدورة:</b>",
-    qualification: "<b>المؤهل:</b>",
-    experience: "<b>الخبرة:</b>",
+    qualification: "<b>المؤهل:</b>", // [جديد]
+    experience: "<b>الخبرة:</b>", // [جديد]
     name: "<b>الاسم:</b>",
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
@@ -35,10 +35,10 @@ const telegramTranslations = {
     lang: "<b>اللغة:</b>"
   },
   fr: {
-    title: "✅ <b>Nouvelle Réservation (Tadrib.ma)</b>", 
+    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
     course: "<b>Formation:</b>",
-    qualification: "<b>Qualification:</b>",
-    experience: "<b>Expérience:</b>",
+    qualification: "<b>Qualification:</b>", // [جديد]
+    experience: "<b>Expérience:</b>", // [جديد]
     name: "<b>Nom:</b>",
     phone: "<b>Téléphone:</b>",
     email: "<b>E-mail:</b>",
@@ -50,40 +50,37 @@ const telegramTranslations = {
     code: "<b>Code CashPlus:</b>",
     card: "<b>4 derniers chiffres:</b>",
     amount: "<b>Montant:</b>",
-    currency: "<b>Devise:</b>",
+    currency: "<b>Currency:</b>",
     lang: "<b>Lang:</b>"
   },
   en: {
-    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
-    course: "<b>Training:</b>",
-    qualification: "<b>Qualification:</b>",
-    experience: "<b>Experience:</b>",
-    name: "<b>Name:</b>",
-    phone: "<b>Phone:</b>",
-    email: "<b>Email:</b>",
-    time: "<b>Time:</b>",
-    status: "<b>Status:</b>",
-    tx_id: "<b>Transaction ID:</b>",
-    req_id: "<b>Request ID:</b>",
-    method: "<b>Method:</b>",
-    code: "<b>CashPlus Code:</b>",
-    card: "<b>Last 4 digits:</b>",
-    amount: "<b>Amount:</b>",
-    currency: "<b>Currency:</b>",
-    lang: "<b>Lang:</b>"
+title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
+course: "<b>Training:</b>",
+qualification: "<b>Qualification:</b>", // [New]
+experience: "<b>Experience:</b>", // [New]
+name: "<b>Name:</b>",
+phone: "<b>Phone:</b>",
+email: "<b>Email:</b>",
+time: "<b>Time:</b>",
+status: "<b>Status:</b>",
+tx_id: "<b>Transaction ID:</b>",
+req_id: "<b>Request ID:</b>",
+method: "<b>Method:</b>",
+code: "<b>CashPlus Code:</b>",
+card: "<b>Last 4 digits:</b>",
+amount: "<b>Amount:</b>",
+currency: "<b>Devise:</b>",
+lang: "<b>Lang:</b>"
   }
 };
 // --- نهاية التحديث ---
 
 /**
- * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
- * هذه الدالة تضمن عدم كسر تنسيق HTML
- * @param {string | number} text النص المراد تنظيفه
- * @returns {string} نص آمن للإرسال
+ * دالة تنظيف لـ HTML
  */
 function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string' && typeof text !== 'number') {
-    return text || "N/A"; // [إصلاح] إرجاع N/A بدلاً من undefined
+    return text;
   }
   return String(text)
     .replace(/&/g, '&amp;')
@@ -145,7 +142,7 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
     const data = req.body; 
     
-    // [تحديث] العناوين الكاملة (21 عمود) - هذه هي الأسماء التي نستخدمها في Google Sheet
+    // العناوين الكاملة (21 عمود)
     const allHeaders = [
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience", 
@@ -163,59 +160,64 @@ export default async (req, res) => {
         console.log("[Notify] Webhook received from YouCan Pay.");
         const payload = JSON.parse(data.metadata.payload);
 
-        // استخراج آخر 4 أرقام (إذا كانت بطاقة)
         let last4 = 'N/A';
         try {
             if (payload.paymentMethod === 'credit_card') {
                  if(data.transaction && data.transaction.data && data.transaction.data.card) {
                     last4 = data.transaction.data.card.last4 || '****';
-                 } else if (data.card) { // هيكل احتياطي
+                 } else if (data.card) { 
                     last4 = data.card.last4 || '****';
                  } else {
-                    last4 = '****'; // مدفوع بالبطاقة ولكن لم نجد الرقم
+                    last4 = '****'; 
                  }
             }
         } catch (e) { console.warn("Could not parse last 4 digits", e); }
 
-        // [إصلاح شامل] - مطابقة الأسماء مع ما يرسله `payment-live.js`
+        // --- [***[FIX 2]***] ---
+        // توحيد البيانات بناءً على الحزمة (Payload)
         normalizedData = {
             "Timestamp": new Date().toLocaleString('fr-CA'),
             "Inquiry ID": payload.inquiryId || data.order_id,
             "Full Name": payload.clientName || data.customer.name,
             "Email": payload.clientEmail || data.customer.email,
             "Phone Number": payload.clientPhone || data.customer.phone,
-            "Selected Course": payload.course, // [إصلاح]
-            "Qualification": payload.qualification, // [إصلاح]
-            "Experience": payload.experience, // [إصلاح]
+            
+            // [تصحيح]: قراءة الأسماء الموحدة من الحزمة
+            "Selected Course": payload.courseText,
+            "Qualification": payload.qualText,
+            "Experience": payload.expText,
+            
             "Payment Status": (data.status === 1 || data.status === 'paid') ? 'paid' : data.status,
             "Transaction ID": data.id || data.transaction_id,
-            "Payment Method": payload.paymentMethod,
+            "Payment Method": payload.paymentMethod || 'N/A',
             "CashPlus Code": 'N/A', 
             "Last 4 Digits": last4,
-            "Amount": data.amount ? data.amount / 100 : 'N/A', 
-            "Currency": data.currency || 'MAD',
-            "Lang": payload.lang, // [إصلاح]
+            
+            // [تصحيح]: استخدام بيانات الحزمة كاحتياط
+            "Amount": (data.amount ? data.amount / 100 : (payload.amount || 'N/A')),
+            "Currency": data.currency || payload.currency || 'MAD',
+            "Lang": payload.lang,
+            
             "utm_source": payload.utm_source,
             "utm_medium": payload.utm_medium,
             "utm_campaign": payload.utm_campaign,
             "utm_term": payload.utm_term,
             "utm_content": payload.utm_content
         };
+        // --- [نهاية التحديث] ---
 
     } else {
         // --- سيناريو 2: إشعار يدوي من الواجهة (Pending CashPlus أو محاكاة) ---
         console.log("[Notify] Manual notification received (Pending or Sandbox).");
-        
-        // [إصلاح شامل] - مطابقة الأسماء مع ما يرسله `script-cleaned-2.js`
         normalizedData = {
             "Timestamp": data.timestamp || new Date().toLocaleString('fr-CA'),
             "Inquiry ID": data.inquiryId,
             "Full Name": data.clientName,
             "Email": data.clientEmail,
             "Phone Number": data.clientPhone,
-            "Selected Course": data.course, // [إصلاح]
-            "Qualification": data.qualification, // [إصلاح]
-            "Experience": data.experience, // [إصلاح]
+            "Selected Course": data.courseText || data.selectedCourse, // <-- استخدام الاسم القديم كاحتياط
+            "Qualification": data.qualText || data.qualification, // <-- استخدام الاسم القديم كاحتياط
+            "Experience": data.expText || data.experience,     // <-- استخدام الاسم القديم كاحتياط
             "Payment Status": data.paymentStatus || 'pending',
             "Transaction ID": data.transactionId || 'N/A',
             "Payment Method": data.paymentMethod,
@@ -223,7 +225,7 @@ export default async (req, res) => {
             "Last 4 Digits": 'N/A',
             "Amount": data.amount || 'N/A', 
             "Currency": data.currency || 'N/A',
-            "Lang": data.lang, // [إصلاح]
+            "Lang": data.lang || data.currentLang,
             "utm_source": data.utm_source,
             "utm_medium": data.utm_medium,
             "utm_campaign": data.utm_campaign,
@@ -238,25 +240,21 @@ export default async (req, res) => {
     if (!sheet) {
         sheet = await doc.addSheet({ title: "Leads", headerValues: allHeaders });
     } else {
-        // التأكد من أن العناوين محدثة
         await sheet.loadHeaderRow();
-        if (sheet.headerValues.length === 0 || sheet.headerValues.join() !== allHeaders.join()) { // [إصلاح] التأكد من أن العناوين ليست فارغة
+        if (sheet.headerValues.join() !== allHeaders.join()) {
             console.log("[Notify] Updating Google Sheet headers...");
             await sheet.setHeaderRow(allHeaders);
         }
     }
     
-    // إضافة الصف بالبيانات الموحدة
-    // الدالة 'addRow' تتطابق مع العناوين (allHeaders) تلقائياً
     await sheet.addRow(normalizedData); 
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
-    
-    // [إصلاح] توحيد مفتاح اللغة (قراءة من المفتاح المصحح)
     const lang = (normalizedData.Lang && ['ar', 'fr', 'en'].includes(normalizedData.Lang)) ? normalizedData.Lang : 'fr';
     const t = telegramTranslations[lang];
 
-    // [إصلاح] استخدام مفاتيح الكائن الصحيحة (التي تحتوي على مسافات)
+    // --- [***[FIX 3]***] ---
+    // التأكد من أننا نقرأ من الكائن الموحد بالأسماء الصحيحة
     const message = `
 ${t.title}
 -----------------------------------
@@ -278,6 +276,7 @@ ${t.req_id} ${sanitizeTelegramHTML(normalizedData["Inquiry ID"])}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData["Transaction ID"])}
 ${t.time} ${sanitizeTelegramHTML(normalizedData["Timestamp"])}
     `;
+    // --- [نهاية التحديث] ---
     
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
