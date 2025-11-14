@@ -1,9 +1,13 @@
 // --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import TelegramBot from 'node-telegram-bot-api';
-// ... (imports)
+import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 
-// ... (إعدادات الأمان)
+// 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY; 
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // 3. تهيئة الخدمات
@@ -71,10 +75,15 @@ const telegramTranslations = {
 };
 // --- نهاية التحديث ---
 
-// ... (دالة sanitizeTelegramHTML)
+/**
+ * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
+ * هذه الدالة تضمن عدم كسر تنسيق HTML
+ * @param {string} text النص المراد تنظيفه
+ * @returns {string} نص آمن للإرسال
+ */
 function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string' && typeof text !== 'number') {
-    return text;
+    return text || "N/A"; // [إصلاح] إرجاع N/A بدلاً من undefined
   }
   return String(text)
     .replace(/&/g, '&amp;')
@@ -83,7 +92,9 @@ function sanitizeTelegramHTML(text) {
 }
 
 
-// ... (دالة authGoogleSheets)
+/**
+ * دالة المصادقة مع Google Sheets
+ */
 async function authGoogleSheets() {
   const serviceAccountAuth = new JWT({
     email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -102,8 +113,30 @@ async function authGoogleSheets() {
  */
 export default async (req, res) => {
   
-  // ... (إعدادات CORS) ...
-  // ... (التحقق من OPTIONS و POST) ...
+  // --- إعدادات CORS ---
+  const allowedOrigins = [
+    'https://tadrib.ma', 
+    'https://tadrib.jaouadouarh.com', 
+    'https://tadrib-cash.jaouadouarh.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:5500',
+    'http://127.0.0.1:5501'
+  ];
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Method Not Allowed' });
+  }
 
   let bot; 
   let normalizedData = {}; // كائن موحد لجمع كل البيانات
@@ -160,7 +193,7 @@ export default async (req, res) => {
             "Last 4 Digits": last4,
             "Amount": data.amount ? data.amount / 100 : 'N/A', 
             "Currency": data.currency || 'MAD',
-            "Lang": payload.lang,
+            "Lang": payload.lang, // [إصلاح]
             "utm_source": payload.utm_source,
             "utm_medium": payload.utm_medium,
             "utm_campaign": payload.utm_campaign,
@@ -204,7 +237,7 @@ export default async (req, res) => {
     } else {
         // التأكد من أن العناوين محدثة
         await sheet.loadHeaderRow();
-        if (sheet.headerValues.join() !== allHeaders.join()) {
+        if (sheet.headerValues.length === 0 || sheet.headerValues.join() !== allHeaders.join()) { // [إصلاح] التأكد من أن العناوين ليست فارغة
             console.log("[Notify] Updating Google Sheet headers...");
             await sheet.setHeaderRow(allHeaders);
         }
@@ -214,6 +247,7 @@ export default async (req, res) => {
     await sheet.addRow(normalizedData); 
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
+    // [إصلاح] توحيد مفتاح اللغة (قراءة من المفتاح المصحح)
     const lang = (normalizedData.Lang && ['ar', 'fr', 'en'].includes(normalizedData.Lang)) ? normalizedData.Lang : 'fr';
     const t = telegramTranslations[lang];
 
