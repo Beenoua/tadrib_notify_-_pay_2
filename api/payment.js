@@ -116,9 +116,11 @@ export default async (req, res) => {
     experience: data.experience,
     inquiryId: data.inquiryId,
 
-    // --- الإضافة المطلوبة لتمرير البيانات ---
+    // --- [هذا هو الإصلاح] بيانات جديدة نمررها ---
     paymentMethod: data.paymentMethod,
-    lang: data.lang
+    lang: data.lang,
+    amount: data.amount,       // <-- [تثبيت 5] أضف هذا
+    currency: data.currency     // <-- [تثبيت 6] أضف هذا
     // --- نهاية الإضافة ---
 },
         redirect_url: `https://tadrib-cash.jaouadouarh.com#payment-success`, 
