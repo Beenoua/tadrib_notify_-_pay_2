@@ -142,52 +142,49 @@ export default async (req, res) => {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
 
-  // --- بداية قسم الاستبدال ---
+  // --- [هذا هو الإصلاح] بداية قسم الاستبدال ---
 let last4 = 'N/A';
 if (isWebhook) {
     try {
-        // محاولة قراءة آخر 4 أرقام من مسارات مختلفة قد يرسلها يوكان
         if(data.transaction && data.transaction.data && data.transaction.data.card) {
             last4 = data.transaction.data.card.last4 || '****';
         } else if (data.card) { 
             last4 = data.card.last4 || '****';
-        } else if (data.payment_method && data.payment_method.card) {
-             last4 = data.payment_method.card.last4 || '****';
         }
     } catch (e) { console.warn("Could not parse last 4 digits"); }
 }
 
 const normalizedData = {
-  // --- بيانات موجودة سابقاً (مزامنة) ---
-  timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
+  // --- بيانات من Webhook.metadata (التي أرسلناها) ---
   inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
-  clientName: isWebhook ? data.customer.name : data.clientName,
-  clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-  clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
   selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
   qualification: isWebhook ? data.metadata.qualification : data.qualification,
   experience: isWebhook ? data.metadata.experience : data.experience,
+  "Payment Method": isWebhook ? data.metadata.paymentMethod : data.paymentMethod,
+  Lang: isWebhook ? data.metadata.lang : data.currentLang,
+  Amount: isWebhook ? data.metadata.amount : data.amount, // <-- [تثبيت 7] يقرأ من metadata
+  Currency: isWebhook ? data.metadata.currency : data.currency, // <-- [تثبيت 8] يقرأ من metadata
+
+  // --- بيانات من Webhook.root (الأصلية) ---
+  clientName: isWebhook ? data.customer.name : data.clientName,
+  clientEmail: isWebhook ? data.customer.email : data.clientEmail,
+  clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
+  paymentStatus: isWebhook ? ((data.status === 1 || data.status === 'paid') ? 'paid' : data.status) : (data.paymentStatus || 'pending'), 
+  transactionId: isWebhook ? (data.id || data.transaction_id) : (data.transactionId || 'N/A'),
+  "Last 4 Digits": last4, // <-- [تثبيت 9] يقرأ من root
+
+  // --- بيانات من المحاكاة فقط ---
+  "CashPlus Code": isWebhook ? 'N/A' : (data.cashPlusCode || 'N/A'),
+
+  // --- بيانات عامة ---
+  timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
   utm_source: data.utm_source || '',
   utm_medium: data.utm_medium || '',
   utm_campaign: data.utm_campaign || '',
-  utm_term: data.utm_term || '', 
-  utm_content: data.utm_content || '',
-  paymentStatus: isWebhook ? ((data.status === 1 || data.status === 'paid') ? 'paid' : data.status) : (data.paymentStatus || 'pending'), 
-  transactionId: isWebhook ? (data.id || data.transaction_id) : (data.transactionId || 'N/A'),
-
-  // --- الإضافة المطلوبة (قراءة البيانات الجديدة) ---
-
-  // 1. بيانات من Webhook يوكان الأصلي
-  Amount: isWebhook ? (data.amount ? data.amount / 100 : 'N/A') : (data.amount || 'N/A'), // تحويل من السنتيم
-  Currency: isWebhook ? data.currency : (data.currency || 'N/A'),
-  "Last 4 Digits": last4, // (فقط للـ Webhook)
-
-  // 2. بيانات من الـ metadata التي مررناها
-  "Payment Method": isWebhook ? data.metadata.paymentMethod : data.paymentMethod,
-  Lang: isWebhook ? data.metadata.lang : data.currentLang
-  // --- نهاية الإضافة ---
+  utm_term: data.term || '', 
+  utm_content: data.content || ''
 };
-// --- نهاية قسم الاستبدال ---
+// --- نهاية قسم الاستبدال ----
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
