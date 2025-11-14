@@ -132,23 +132,34 @@ export default async (req, res) => {
 
     const isWebhook = data.metadata && data.customer;
 
-    const normalizedData = {
-      timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
-      clientName: isWebhook ? data.customer.name : data.clientName,
-      clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-      clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
-      selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
-      qualification: isWebhook ? data.metadata.qualification : data.qualification,
-      experience: isWebhook ? data.metadata.experience : data.experience,
-      utm_source: data.utm_source || '',
-      utm_medium: data.utm_medium || '',
-      utm_campaign: data.utm_campaign || '',
-      utm_term: data.utm_term || '', 
-      utm_content: data.utm_content || '',
-      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'), 
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A') 
-    };
+   const normalizedData = {
+    timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
+    inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
+    clientName: isWebhook ? data.customer.name : data.clientName,
+    clientEmail: isWebhook ? data.customer.email : data.clientEmail,
+    clientPhone: isWebhook ? data.customer.phone : data.clientPhone,
+
+    selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
+    qualification: isWebhook ? data.metadata.qualification : data.qualification,
+    experience: isWebhook ? data.metadata.experience : data.experience,
+
+    paymentMethod: isWebhook ? (data.payment_method || data.metadata.paymentMethod) : data.paymentMethod,
+    cashplusCode: data.cashplus?.code || null,
+    last4: data.card?.last4 || null,
+    amount: data.amount || data.metadata?.finalAmount || null,
+    currency: data.currency || "MAD",
+    lang: data.metadata?.lang || data.currentLang || 'fr',
+
+    utm_source: data.utm_source || '',
+    utm_medium: data.utm_medium || '',
+    utm_campaign: data.utm_campaign || '',
+    utm_term: data.utm_term || '',
+    utm_content: data.utm_content || '',
+
+    paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'),
+    transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A')
+};
+
 
     // --- المهمة الأولى: حفظ البيانات في Google Sheets ---
     await authGoogleSheets(); 
@@ -205,6 +216,11 @@ ${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
 ${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
+${t.paymentMethod || '<b>Method:</b>'} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}
+${t.amount || '<b>Amount:</b>'} ${sanitizeTelegramHTML(normalizedData.amount)} ${normalizedData.currency}
+${t.lang || '<b>Lang:</b>'} ${sanitizeTelegramHTML(normalizedData.lang)}
+${normalizedData.cashplusCode ? `<b>CashPlus Code:</b> ${sanitizeTelegramHTML(normalizedData.cashplusCode)}` : ''}
+${normalizedData.last4 ? `<b>Card Last 4:</b> ${sanitizeTelegramHTML(normalizedData.last4)}` : ''}
 ${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
 ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     `;
@@ -231,3 +247,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
+
