@@ -164,7 +164,7 @@ export default async (req, res) => {
     const headers = [
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
       "Selected Course", "Qualification", "Experience",
-      "Payment Method", "CashPlus Code", "Card Last 4",
+      "Payment Method", "CashPlus Code", "Card Digits",
       "Amount", "Currency", "Lang",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
       "Payment Status", "Transaction ID"
@@ -185,7 +185,7 @@ export default async (req, res) => {
 
       "Payment Method": normalizedData.paymentMethod,
       "CashPlus Code": normalizedData.cashplusCode,
-      "Last4Digits": normalizedData.last4,
+      "Card Digits": normalizedData.last4,
       "Amount": normalizedData.amount,
       "Currency": normalizedData.currency,
       "Lang": normalizedData.lang,
@@ -233,5 +233,6 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ error: "Internal Error", details: error.message });
   }
 };
+
 
 
