@@ -16,8 +16,10 @@ let doc;
 // --- [تحديث] ترجمات التيليغرام (استخدام HTML) ---
 const telegramTranslations = {
   ar: {
-    title: "✅ <b>حجز جديد (Tadrib.ma)</b>", 
+    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
     course: "<b>الدورة:</b>",
+    qualification: "<b>المؤهل:</b>", // [جديد]
+    experience: "<b>الخبرة:</b>", // [جديد]
     name: "<b>الاسم:</b>",
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
@@ -28,11 +30,15 @@ const telegramTranslations = {
     method: "<b>طريقة الدفع:</b>",
     code: "<b>كود كاش بلوس:</b>",
     card: "<b>آخر أرقام البطاقة:</b>",
-    amount: "<b>المبلغ:</b>"
+    amount: "<b>المبلغ:</b>",
+    currency: "<b>العملة:</b>",
+    lang: "<b>اللغة:</b>"
   },
   fr: {
-    title: "✅ <b>Nouvelle Réservation (Tadrib.ma)</b>", 
+    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
     course: "<b>Formation:</b>",
+    qualification: "<b>Qualification:</b>", // [جديد]
+    experience: "<b>Expérience:</b>", // [جديد]
     name: "<b>Nom:</b>",
     phone: "<b>Téléphone:</b>",
     email: "<b>E-mail:</b>",
@@ -43,10 +49,28 @@ const telegramTranslations = {
     method: "<b>Méthode:</b>",
     code: "<b>Code CashPlus:</b>",
     card: "<b>4 derniers chiffres:</b>",
-    amount: "<b>Montant:</b>"
+    amount: "<b>Montant:</b>",
+    currency: "<b>Currency:</b>",
+    lang: "<b>Lang:</b>"
   },
   en: {
-    // ... (يمكن إضافة ترجمة إنجليزية)
+title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
+course: "<b>Training:</b>",
+qualification: "<b>Qualification:</b>", // [New]
+experience: "<b>Experience:</b>", // [New]
+name: "<b>Name:</b>",
+phone: "<b>Phone:</b>",
+email: "<b>Email:</b>",
+time: "<b>Time:</b>",
+status: "<b>Status:</b>",
+tx_id: "<b>Transaction ID:</b>",
+req_id: "<b>Request ID:</b>",
+method: "<b>Method:</b>",
+code: "<b>CashPlus Code:</b>",
+card: "<b>Last 4 digits:</b>",
+amount: "<b>Amount:</b>",
+currency: "<b>Devise:</b>",
+lang: "<b>Lang:</b>"
   }
 };
 // --- نهاية التحديث ---
@@ -231,9 +255,13 @@ export default async (req, res) => {
     const message = `
 ${t.title}
 -----------------------------------
-${t.course} ${sanitizeTelegramHTML(normalizedData["Selected Course"])}
-${t.name} ${sanitizeTelegramHTML(normalizedData["Full Name"])}
-${t.phone} ${sanitizeTelegramHTML(normalizedData["Phone Number"])}
+${t.course} ${sanitizeTelegramHTML(normalizedData.selectedCourse)}
+${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
+${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
+-----------------------------------
+${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
+${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
+${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
 -----------------------------------
 ${t.status} <b>${sanitizeTelegramHTML(normalizedData["Payment Status"])}</b>
 ${t.amount} ${sanitizeTelegramHTML(normalizedData["Amount"])} ${sanitizeTelegramHTML(normalizedData["Currency"])}
@@ -265,3 +293,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData["Timestamp"])}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
+
