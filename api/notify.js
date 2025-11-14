@@ -141,8 +141,7 @@ export default async (req, res) => {
 
       paymentMethod: data.payment_method || data.metadata?.paymentMethod || null,
       cashplusCode: data.cashplus?.code || null,
-      last4: data.card?.last4 || data.metadata?.card?.last4 || null,
-      amount: data.amount || data.metadata?.finalAmount || null,
+      last4: data.card?.last4 || data.metadata?.card?.last4 || null,      amount: data.amount || data.metadata?.finalAmount || null,
       currency: data.currency || "MAD",
       lang: lang,
 
@@ -164,7 +163,7 @@ export default async (req, res) => {
     const headers = [
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
       "Selected Course", "Qualification", "Experience",
-      "Payment Method", "CashPlus Code", "Card Digits",
+      "Payment Method", "CashPlus Code", "Card Last 4",
       "Amount", "Currency", "Lang",
       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
       "Payment Status", "Transaction ID"
@@ -185,7 +184,7 @@ export default async (req, res) => {
 
       "Payment Method": normalizedData.paymentMethod,
       "CashPlus Code": normalizedData.cashplusCode,
-      "Card Digits": normalizedData.last4,
+      "Last4Digits": normalizedData.last4,
       "Amount": normalizedData.amount,
       "Currency": normalizedData.currency,
       "Lang": normalizedData.lang,
@@ -233,6 +232,3 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(500).json({ error: "Internal Error", details: error.message });
   }
 };
-
-
-
