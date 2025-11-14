@@ -78,7 +78,7 @@ const telegramTranslations = {
 /**
  * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
  * هذه الدالة تضمن عدم كسر تنسيق HTML
- * @param {string} text النص المراد تنظيفه
+ * @param {string | number} text النص المراد تنظيفه
  * @returns {string} نص آمن للإرسال
  */
 function sanitizeTelegramHTML(text) {
@@ -145,7 +145,7 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN); 
     const data = req.body; 
     
-    // [تحديث] العناوين الكاملة (21 عمود)
+    // [تحديث] العناوين الكاملة (21 عمود) - هذه هي الأسماء التي نستخدمها في Google Sheet
     const allHeaders = [
       "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number", 
       "Selected Course", "Qualification", "Experience", 
@@ -177,6 +177,7 @@ export default async (req, res) => {
             }
         } catch (e) { console.warn("Could not parse last 4 digits", e); }
 
+        // [إصلاح شامل] - مطابقة الأسماء مع ما يرسله `payment-live.js`
         normalizedData = {
             "Timestamp": new Date().toLocaleString('fr-CA'),
             "Inquiry ID": payload.inquiryId || data.order_id,
@@ -204,6 +205,8 @@ export default async (req, res) => {
     } else {
         // --- سيناريو 2: إشعار يدوي من الواجهة (Pending CashPlus أو محاكاة) ---
         console.log("[Notify] Manual notification received (Pending or Sandbox).");
+        
+        // [إصلاح شامل] - مطابقة الأسماء مع ما يرسله `script-cleaned-2.js`
         normalizedData = {
             "Timestamp": data.timestamp || new Date().toLocaleString('fr-CA'),
             "Inquiry ID": data.inquiryId,
@@ -244,9 +247,11 @@ export default async (req, res) => {
     }
     
     // إضافة الصف بالبيانات الموحدة
+    // الدالة 'addRow' تتطابق مع العناوين (allHeaders) تلقائياً
     await sheet.addRow(normalizedData); 
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
+    
     // [إصلاح] توحيد مفتاح اللغة (قراءة من المفتاح المصحح)
     const lang = (normalizedData.Lang && ['ar', 'fr', 'en'].includes(normalizedData.Lang)) ? normalizedData.Lang : 'fr';
     const t = telegramTranslations[lang];
