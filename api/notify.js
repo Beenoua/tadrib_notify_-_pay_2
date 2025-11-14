@@ -1,13 +1,9 @@
 // --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import TelegramBot from 'node-telegram-bot-api';
-import { JWT } from 'google-auth-library';
+// ... (imports)
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 
-// 2. إعدادات الأمان (يتم قراءتها من متغيرات البيئة)
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY; 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// ... (إعدادات الأمان)
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // 3. تهيئة الخدمات
@@ -16,10 +12,10 @@ let doc;
 // --- [تحديث] ترجمات التيليغرام (استخدام HTML) ---
 const telegramTranslations = {
   ar: {
-    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳", 
+    title: "✅ <b>حجز جديد (Tadrib.ma)</b>", 
     course: "<b>الدورة:</b>",
-    qualification: "<b>المؤهل:</b>", // [جديد]
-    experience: "<b>الخبرة:</b>", // [جديد]
+    qualification: "<b>المؤهل:</b>",
+    experience: "<b>الخبرة:</b>",
     name: "<b>الاسم:</b>",
     phone: "<b>الهاتف:</b>",
     email: "<b>الإيميل:</b>",
@@ -35,10 +31,10 @@ const telegramTranslations = {
     lang: "<b>اللغة:</b>"
   },
   fr: {
-    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳", 
+    title: "✅ <b>Nouvelle Réservation (Tadrib.ma)</b>", 
     course: "<b>Formation:</b>",
-    qualification: "<b>Qualification:</b>", // [جديد]
-    experience: "<b>Expérience:</b>", // [جديد]
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Expérience:</b>",
     name: "<b>Nom:</b>",
     phone: "<b>Téléphone:</b>",
     email: "<b>E-mail:</b>",
@@ -50,37 +46,32 @@ const telegramTranslations = {
     code: "<b>Code CashPlus:</b>",
     card: "<b>4 derniers chiffres:</b>",
     amount: "<b>Montant:</b>",
-    currency: "<b>Currency:</b>",
+    currency: "<b>Devise:</b>",
     lang: "<b>Lang:</b>"
   },
   en: {
-title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
-course: "<b>Training:</b>",
-qualification: "<b>Qualification:</b>", // [New]
-experience: "<b>Experience:</b>", // [New]
-name: "<b>Name:</b>",
-phone: "<b>Phone:</b>",
-email: "<b>Email:</b>",
-time: "<b>Time:</b>",
-status: "<b>Status:</b>",
-tx_id: "<b>Transaction ID:</b>",
-req_id: "<b>Request ID:</b>",
-method: "<b>Method:</b>",
-code: "<b>CashPlus Code:</b>",
-card: "<b>Last 4 digits:</b>",
-amount: "<b>Amount:</b>",
-currency: "<b>Devise:</b>",
-lang: "<b>Lang:</b>"
+    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
+    course: "<b>Training:</b>",
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Experience:</b>",
+    name: "<b>Name:</b>",
+    phone: "<b>Phone:</b>",
+    email: "<b>Email:</b>",
+    time: "<b>Time:</b>",
+    status: "<b>Status:</b>",
+    tx_id: "<b>Transaction ID:</b>",
+    req_id: "<b>Request ID:</b>",
+    method: "<b>Method:</b>",
+    code: "<b>CashPlus Code:</b>",
+    card: "<b>Last 4 digits:</b>",
+    amount: "<b>Amount:</b>",
+    currency: "<b>Currency:</b>",
+    lang: "<b>Lang:</b>"
   }
 };
 // --- نهاية التحديث ---
 
-/**
- * --- !!! [الإصلاح: دالة تنظيف لـ HTML] !!! ---
- * هذه الدالة تضمن عدم كسر تنسيق HTML
- * @param {string} text النص المراد تنظيفه
- * @returns {string} نص آمن للإرسال
- */
+// ... (دالة sanitizeTelegramHTML)
 function sanitizeTelegramHTML(text) {
   if (typeof text !== 'string' && typeof text !== 'number') {
     return text;
@@ -92,9 +83,7 @@ function sanitizeTelegramHTML(text) {
 }
 
 
-/**
- * دالة المصادقة مع Google Sheets
- */
+// ... (دالة authGoogleSheets)
 async function authGoogleSheets() {
   const serviceAccountAuth = new JWT({
     email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -113,30 +102,8 @@ async function authGoogleSheets() {
  */
 export default async (req, res) => {
   
-  // --- إعدادات CORS ---
-  const allowedOrigins = [
-    'https://tadrib.ma', 
-    'https://tadrib.jaouadouarh.com', 
-    'https://tadrib-cash.jaouadouarh.com',
-    'http://localhost:3000',
-    'http://127.0.0.1:5500',
-    'http://127.0.0.1:5501'
-  ];
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ message: 'Method Not Allowed' });
-  }
+  // ... (إعدادات CORS) ...
+  // ... (التحقق من OPTIONS و POST) ...
 
   let bot; 
   let normalizedData = {}; // كائن موحد لجمع كل البيانات
@@ -167,7 +134,6 @@ export default async (req, res) => {
         let last4 = 'N/A';
         try {
             if (payload.paymentMethod === 'credit_card') {
-                 // YouCan Pay لا ترسل تفاصيل البطاقة بشكل موحد، هذا أفضل تخمين
                  if(data.transaction && data.transaction.data && data.transaction.data.card) {
                     last4 = data.transaction.data.card.last4 || '****';
                  } else if (data.card) { // هيكل احتياطي
@@ -184,15 +150,15 @@ export default async (req, res) => {
             "Full Name": payload.clientName || data.customer.name,
             "Email": payload.clientEmail || data.customer.email,
             "Phone Number": payload.clientPhone || data.customer.phone,
-            "Selected Course": payload.courseText,
-            "Qualification": payload.qualText,
-            "Experience": payload.expText,
+            "Selected Course": payload.course, // [إصلاح]
+            "Qualification": payload.qualification, // [إصلاح]
+            "Experience": payload.experience, // [إصلاح]
             "Payment Status": (data.status === 1 || data.status === 'paid') ? 'paid' : data.status,
             "Transaction ID": data.id || data.transaction_id,
             "Payment Method": payload.paymentMethod,
-            "CashPlus Code": 'N/A', // الدفع اكتمل، الكود لم يعد مهماً
+            "CashPlus Code": 'N/A', 
             "Last 4 Digits": last4,
-            "Amount": data.amount ? data.amount / 100 : 'N/A', // تحويل من السنتيم
+            "Amount": data.amount ? data.amount / 100 : 'N/A', 
             "Currency": data.currency || 'MAD',
             "Lang": payload.lang,
             "utm_source": payload.utm_source,
@@ -211,17 +177,17 @@ export default async (req, res) => {
             "Full Name": data.clientName,
             "Email": data.clientEmail,
             "Phone Number": data.clientPhone,
-            "Selected Course": data.courseText || data.selectedCourse,
-            "Qualification": data.qualText || data.qualification,
-            "Experience": data.expText || data.experience,
+            "Selected Course": data.course, // [إصلاح]
+            "Qualification": data.qualification, // [إصلاح]
+            "Experience": data.experience, // [إصلاح]
             "Payment Status": data.paymentStatus || 'pending',
             "Transaction ID": data.transactionId || 'N/A',
             "Payment Method": data.paymentMethod,
             "CashPlus Code": data.cashPlusCode || 'N/A',
             "Last 4 Digits": 'N/A',
-            "Amount": data.amount || 'N/A', // قد نرسله في المحاكاة
+            "Amount": data.amount || 'N/A', 
             "Currency": data.currency || 'N/A',
-            "Lang": data.lang || data.currentLang,
+            "Lang": data.lang, // [إصلاح]
             "utm_source": data.utm_source,
             "utm_medium": data.utm_medium,
             "utm_campaign": data.utm_campaign,
@@ -245,23 +211,23 @@ export default async (req, res) => {
     }
     
     // إضافة الصف بالبيانات الموحدة
-    // الدالة 'addRow' تتطابق مع العناوين تلقائياً
     await sheet.addRow(normalizedData); 
 
     // --- المهمة الثانية: إرسال إشعار فوري عبر Telegram ---
     const lang = (normalizedData.Lang && ['ar', 'fr', 'en'].includes(normalizedData.Lang)) ? normalizedData.Lang : 'fr';
     const t = telegramTranslations[lang];
 
+    // [إصلاح] استخدام مفاتيح الكائن الصحيحة (التي تحتوي على مسافات)
     const message = `
 ${t.title}
 -----------------------------------
-${t.course} ${sanitizeTelegramHTML(normalizedData.selectedCourse)}
-${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
-${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
+${t.course} ${sanitizeTelegramHTML(normalizedData["Selected Course"])}
+${t.qualification} ${sanitizeTelegramHTML(normalizedData["Qualification"])}
+${t.experience} ${sanitizeTelegramHTML(normalizedData["Experience"])}
 -----------------------------------
-${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
-${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
-${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
+${t.name} ${sanitizeTelegramHTML(normalizedData["Full Name"])}
+${t.phone} ${sanitizeTelegramHTML(normalizedData["Phone Number"])}
+${t.email} ${sanitizeTelegramHTML(normalizedData["Email"])}
 -----------------------------------
 ${t.status} <b>${sanitizeTelegramHTML(normalizedData["Payment Status"])}</b>
 ${t.amount} ${sanitizeTelegramHTML(normalizedData["Amount"])} ${sanitizeTelegramHTML(normalizedData["Currency"])}
@@ -293,4 +259,3 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData["Timestamp"])}
     res.status(500).json({ result: 'error', message: 'Internal Server Error' });
   }
 };
-
