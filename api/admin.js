@@ -1,6 +1,11 @@
+import 'dotenv/config';
+import dotenv from 'dotenv';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { validateRequired, validateEmail } from './utils.js';
+
+// Load .env.local for local development
+dotenv.config({ path: '.env.local' });
 
 // Simple authentication (can be enhanced with JWT or database later)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -51,7 +56,7 @@ async function handleGet(req, res) {
         // Validate environment variables
         const spreadsheetId = process.env.GOOGLE_SHEET_ID;
         const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
 
         if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
             console.error('Missing Google Sheets environment variables');
@@ -158,7 +163,7 @@ async function handlePut(req, res) {
         // Validate environment variables
         const spreadsheetId = process.env.GOOGLE_SHEET_ID;
         const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
 
         if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
             console.error('Missing Google Sheets environment variables');
@@ -250,7 +255,7 @@ async function handleDelete(req, res) {
         // Validate environment variables
         const spreadsheetId = process.env.GOOGLE_SHEET_ID;
         const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
 
         if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
             console.error('Missing Google Sheets environment variables');
