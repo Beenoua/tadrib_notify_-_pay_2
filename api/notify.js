@@ -3,12 +3,41 @@ import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 
+// Input validation and sanitization helpers
+function validateEmail(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+function validatePhone(phone) {
+  // Moroccan phone validation (simplified)
+  const phoneRegex = /^(\+212|00212|212|0)?[6-7]\d{8}$/;
+  return phoneRegex.test(phone.replace(/[\s\-]/g, ''));
+}
+
+function sanitizeString(str) {
+  return str ? str.toString().trim().replace(/[<>\"'&]/g, '') : '';
+}
+
+function validateRequired(data, fields) {
+  const missing = fields.filter(field => !data[field] || data[field].toString().trim() === '');
+  if (missing.length > 0) {
+    throw new Error(`Missing required fields: ${missing.join(', ')}`);
+  }
+}
+
 // 2. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// Validate environment variables
+if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
+    !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  console.error('Missing required environment variables for notify service');
+}
 
 // 3. تهيئة Google Sheet
 let doc;
@@ -162,36 +191,53 @@ export default async (req, res) => {
 
     const isWebhook = data.metadata && data.customer;
 
+    // Validate required fields for webhook
+    if (isWebhook) {
+      validateRequired(data.customer, ['name', 'email', 'phone']);
+      validateRequired(data.metadata, ['inquiryId']);
+    } else {
+      validateRequired(data, ['clientName', 'clientEmail', 'clientPhone', 'inquiryId']);
+    }
+
+    // Validate email and phone if provided
+    const emailToValidate = isWebhook ? data.customer.email : data.clientEmail;
+    const phoneToValidate = isWebhook ? data.customer.phone : data.clientPhone;
+
+    if (emailToValidate && !validateEmail(emailToValidate)) {
+      throw new Error('Invalid email format');
+    }
+    if (phoneToValidate && !validatePhone(phoneToValidate)) {
+      throw new Error('Invalid phone number format');
+    }
+
     // جميع البيانات المهيكلة
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: isWebhook ? data.metadata.inquiryId : data.inquiryId,
+      inquiryId: sanitizeString(isWebhook ? data.metadata.inquiryId : data.inquiryId),
 
-      clientName: isWebhook ? data.customer.name : data.clientName,
-      clientEmail: isWebhook ? data.customer.email : data.clientEmail,
-     clientPhone: normalizePhone( isWebhook ? data.customer.phone : data.clientPhone
-),
+      clientName: sanitizeString(isWebhook ? data.customer.name : data.clientName),
+      clientEmail: sanitizeString(isWebhook ? data.customer.email : data.clientEmail),
+      clientPhone: normalizePhone(isWebhook ? data.customer.phone : data.clientPhone),
 
+      selectedCourse: sanitizeString(isWebhook ? data.metadata.course : data.selectedCourse),
+      qualification: sanitizeString(isWebhook ? data.metadata.qualification : data.qualification),
+      experience: sanitizeString(isWebhook ? data.metadata.experience : data.experience),
 
-      selectedCourse: isWebhook ? data.metadata.course : data.selectedCourse,
-      qualification: isWebhook ? data.metadata.qualification : data.qualification,
-      experience: isWebhook ? data.metadata.experience : data.experience,
-
-      paymentMethod: data.payment_method || data.metadata?.paymentMethod || null,
-      cashplusCode: data.cashplus?.code || null,
-      last4: data.card?.last4 || data.metadata?.card?.last4 || null,
+      paymentMethod: sanitizeString(data.payment_method || data.metadata?.paymentMethod || null),
+      cashplusCode: sanitizeString(data.cashplus?.code || null),
+      last4: sanitizeString(data.card?.last4 || data.metadata?.card?.last4 || null),
       amount: data.amount || data.metadata?.finalAmount || null,
       currency: data.currency || "MAD",
       lang: lang,
 
-      utm_source: data.utm_source || '',
-      utm_medium: data.utm_medium || '',
-      utm_campaign: data.utm_campaign || '',
-      utm_term: data.utm_term || '',
-      utm_content: data.utm_content || '',
+      utm_source: sanitizeString(data.utm_source || ''),
+      utm_medium: sanitizeString(data.utm_medium || ''),
+      utm_campaign: sanitizeString(data.utm_campaign || ''),
+      utm_term: sanitizeString(data.utm_term || ''),
+      utm_content: sanitizeString(data.utm_content || ''),
 
-      paymentStatus: isWebhook ? data.status : (data.paymentStatus || 'pending'),
-      transactionId: isWebhook ? data.transaction_id : (data.transactionId || 'N/A')
+      paymentStatus: sanitizeString(isWebhook ? data.status : (data.paymentStatus || 'pending')),
+      transactionId: sanitizeString(isWebhook ? data.transaction_id : (data.transactionId || 'N/A'))
     };
 
     // حفظ في Google Sheets
@@ -267,9 +313,14 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(200).json({ result: 'success', message: 'Webhook received and saved.' });
 
   } catch (error) {
-    console.error("Webhook Error:", error);
-    res.status(500).json({ error: "Internal Error", details: error.message });
+    console.error("Webhook Error:", error.message);
+
+    // Sanitize error message for client
+    let clientMessage = "An error occurred while processing the webhook";
+    if (error.message.includes('Missing required fields') || error.message.includes('Invalid')) {
+      clientMessage = error.message;
+    }
+
+    res.status(400).json({ error: "Bad Request", message: clientMessage });
   }
 };
-
-
