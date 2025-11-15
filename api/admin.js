@@ -134,7 +134,74 @@ async function handleGet(req, res) {
             frenchUsers: data.filter(item => item.language === 'fr').length,
             englishUsers: data.filter(item => item.language === 'en').length
         };
+// --- START: New Statistics Calculation ---
+            
+        // 1. Filter data by status
+        const paidData = data.filter(item => item.status === 'paid');
+        const pendingData = data.filter(item => item.status === 'pending');
+        const failedData = data.filter(item => item.status === 'failed');
+        const canceledData = data.filter(item => item.status === 'canceled');
 
+        // 2. Helper function to count payment methods in a dataset
+        const countMethods = (dataset) => {
+            let cashplus = 0;
+            let card = 0;
+            for (const item of dataset) {
+                if (item.paymentMethod === 'cashplus') {
+                    cashplus++;
+                } else if (item.paymentMethod === 'card') {
+                    card++;
+                }
+            }
+            return { cashplus, card };
+        };
+
+        // 3. Calculate breakdowns
+        const paidBreakdown = countMethods(paidData);
+        const pendingBreakdown = countMethods(pendingData);
+        const failedBreakdown = countMethods(failedData);
+        const canceledBreakdown = countMethods(canceledData);
+        const totalBreakdown = countMethods(data); // For the total chart
+
+        // 4. Assemble the final stats object
+        const stats = {
+            // Total counts
+            totalPayments: data.length,
+            totalRevenue: data.reduce((sum, item) => sum + item.finalAmount, 0),
+            
+            // Status counts
+            paidPayments: paidData.length,
+            pendingPayments: pendingData.length,
+            failedPayments: failedData.length,
+            canceledPayments: canceledData.length,
+
+            // Language counts
+            arabicUsers: data.filter(item => item.language === 'ar').length,
+            frenchUsers: data.filter(item => item.language === 'fr').length,
+            englishUsers: data.filter(item => item.language === 'en').length,
+
+            // --- NEW: Payment Method Breakdowns ---
+            // Total breakdown (for the chart)
+            cashplusPayments: totalBreakdown.cashplus,
+            cardPayments: totalBreakdown.card,
+            
+            // Paid breakdown
+            paid_cashplus: paidBreakdown.cashplus,
+            paid_card: paidBreakdown.card,
+            
+            // Pending breakdown
+            pending_cashplus: pendingBreakdown.cashplus,
+            pending_card: pendingBreakdown.card,
+
+            // Failed breakdown
+            failed_cashplus: failedBreakdown.cashplus,
+            failed_card: failedBreakdown.card,
+
+            // Canceled breakdown
+            canceled_cashplus: canceledBreakdown.cashplus,
+            canceled_card: canceledBreakdown.card
+        };
+        // --- END: New Statistics Calculation ---
         res.status(200).json({
             success: true,
             data: data,
@@ -332,6 +399,7 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
 
