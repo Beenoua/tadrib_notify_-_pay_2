@@ -15,5 +15,11 @@
       "source": "/api/(.*)",
       "destination": "/api/$1"
     }
-  ]
+  ],
+  "functions": {
+    "api/admin.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "version": 2
 }
