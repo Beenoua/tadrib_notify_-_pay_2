@@ -149,15 +149,16 @@ export default async (req, res) => {
     if (phoneToValidate && !validatePhone(phoneToValidate)) {
       throw new Error('Invalid phone number format');
     }
-      // --- START FIX for 'undefined' status ---
+      // --- START ROBUST FIX for 'undefined' status ---
     // 1. Determine the raw status
-    let rawStatus = isWebhook ? data.status : (data.paymentStatus || 'pending');
+    let rawStatus = isWebhook ? data.status : data.paymentStatus;
     
-    // 2. Clean the raw status
-    if (!rawStatus || rawStatus.toLowerCase() === 'undefined' || rawStatus.trim() === '') {
+    // 2. Clean the raw status (robustly)
+    // Check for null, undefined value, empty string, or "undefined" string
+    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.toLowerCase() === 'undefined') {
         rawStatus = 'pending'; // Default to 'pending' if it's invalid
     }
-    // --- END FIX ---
+    // --- END ROBUST FIX ---
 
     // جميع البيانات المهيكلة
     const normalizedData = {
@@ -273,5 +274,6 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(400).json({ error: "Bad Request", message: clientMessage });
   }
 };
+
 
 
