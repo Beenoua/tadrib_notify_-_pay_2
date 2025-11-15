@@ -1,5 +1,3 @@
-import 'dotenv/config';
-import dotenv from 'dotenv';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { validateRequired, validateEmail } from './utils.js';
@@ -311,3 +309,4 @@ async function handleDelete(req, res) {
         });
     }
 }
+
