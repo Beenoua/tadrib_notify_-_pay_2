@@ -82,36 +82,40 @@ async function handleGet(req, res) {
 
         const rows = await sheet.getRows();
 
-        // Process and clean the data from notify-fixed.js format
-        const data = rows.map(row => ({
+       // --- START FIX: Replace the entire rows.map block ---
+        const data = rows.map(row => {
+            // --- FIX for 'undefined' status ---
             const rowStatus = row.get('Payment Status');
             const cleanStatus = (!rowStatus || rowStatus.toLowerCase() === 'undefined' || rowStatus.trim() === '') ? 'pending' : rowStatus;
+            // --- END FIX ---
+
+            // --- Return the full object ---
             return {
-            timestamp: row.get('Timestamp') || '',
-            status: row.get('Payment Status') || 'pending',
-            transactionId: row.get('Transaction ID') || '',
-            amount: parseFloat(row.get('Amount')) || 0,
-            currency: row.get('Currency') || 'MAD',
-            customerName: row.get('Full Name') || '',
-            customerEmail: row.get('Email') || '',
-            customerPhone: row.get('Phone Number') || '',
-            course: row.get('Selected Course') || '',
-            // --- NEW DATA ADDED ---
-            qualification: row.get('Qualification') || '',
-            experience: row.get('Experience') || '',
-            utm_source: row.get('utm_source') || '',
-            utm_medium: row.get('utm_medium') || '',
-            utm_campaign: row.get('utm_campaign') || '',
-            utm_term: row.get('utm_term') || '',
-            utm_content: row.get('utm_content') || '',
-            // --- END NEW DATA ---
-            paymentMethod: row.get('Payment Method') || '',
-            language: row.get('Lang') || '',
-            finalAmount: parseFloat(row.get('Amount')) || 0,
-            cashplusCode: row.get('CashPlus Code') || '',
-            last4: row.get('Last4Digits') || '', // Added last4
-            inquiryId: row.get('Inquiry ID') || ''
-        }));
+                timestamp: row.get('Timestamp') || '',
+                status: cleanStatus, // Use cleaned status
+                transactionId: row.get('Transaction ID') || '',
+                amount: parseFloat(row.get('Amount')) || 0,
+                currency: row.get('Currency') || 'MAD',
+                customerName: row.get('Full Name') || '',
+                customerEmail: row.get('Email') || '',
+                customerPhone: row.get('Phone Number') || '',
+                course: row.get('Selected Course') || '',
+                qualification: row.get('Qualification') || '',
+                experience: row.get('Experience') || '',
+                utm_source: row.get('utm_source') || '',
+                utm_medium: row.get('utm_medium') || '',
+                utm_campaign: row.get('utm_campaign') || '',
+                utm_term: row.get('utm_term') || '',
+                utm_content: row.get('utm_content') || '',
+                paymentMethod: row.get('Payment Method') || '',
+                language: row.get('Lang') || '',
+                finalAmount: parseFloat(row.get('Amount')) || 0,
+                cashplusCode: row.get('CashPlus Code') || '',
+                last4: row.get('Last4Digits') || '', 
+                inquiryId: row.get('Inquiry ID') || ''
+            };
+        });
+        // --- END FIX ---
 
         // Calculate statistics
         const stats = {
@@ -324,3 +328,4 @@ async function handleDelete(req, res) {
         });
     }
 }
+
