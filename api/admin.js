@@ -86,10 +86,11 @@ async function handleGet(req, res) {
         const data = rows.map(row => {
             // --- FIX for 'undefined' status (Robust) ---
             let cleanStatus = row.get('Payment Status');
-            if (!cleanStatus || typeof cleanStatus !== 'string' || cleanStatus.trim() === '' || cleanStatus.toLowerCase() === 'undefined') {
+            // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
+            if (!cleanStatus || typeof cleanStatus !== 'string' || cleanStatus.trim() === '' || cleanStatus.trim().toLowerCase() === 'undefined') {
                 cleanStatus = 'pending';
             }
-            // --- END FIX ---
+            // --- END FINAL FIX ---
 
             // --- Return the full object ---
             return {
@@ -330,5 +331,6 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
