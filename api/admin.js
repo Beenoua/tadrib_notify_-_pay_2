@@ -2,8 +2,6 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { validateRequired, validateEmail } from './utils.js';
 
-
-
 // Simple authentication (can be enhanced with JWT or database later)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
@@ -95,12 +93,20 @@ async function handleGet(req, res) {
             customerEmail: row.get('Email') || '',
             customerPhone: row.get('Phone Number') || '',
             course: row.get('Selected Course') || '',
+            // --- NEW DATA ADDED ---
             qualification: row.get('Qualification') || '',
             experience: row.get('Experience') || '',
+            utm_source: row.get('utm_source') || '',
+            utm_medium: row.get('utm_medium') || '',
+            utm_campaign: row.get('utm_campaign') || '',
+            utm_term: row.get('utm_term') || '',
+            utm_content: row.get('utm_content') || '',
+            // --- END NEW DATA ---
             paymentMethod: row.get('Payment Method') || '',
             language: row.get('Lang') || '',
             finalAmount: parseFloat(row.get('Amount')) || 0,
             cashplusCode: row.get('CashPlus Code') || '',
+            last4: row.get('Last4Digits') || '', // Added last4
             inquiryId: row.get('Inquiry ID') || ''
         }));
 
@@ -209,6 +215,13 @@ async function handlePut(req, res) {
         if (updateData.paymentMethod !== undefined) row.set('Payment Method', updateData.paymentMethod);
         if (updateData.finalAmount !== undefined) row.set('Amount', updateData.finalAmount.toString());
         if (updateData.language !== undefined) row.set('Lang', updateData.language);
+        
+        // --- NEW EDITABLE FIELDS ---
+        if (updateData.qualification !== undefined) row.set('Qualification', updateData.qualification);
+        if (updateData.experience !== undefined) row.set('Experience', updateData.experience);
+        if (updateData.utm_source !== undefined) row.set('utm_source', updateData.utm_source);
+        // --- END NEW FIELDS ---
+
 
         await row.save();
 
