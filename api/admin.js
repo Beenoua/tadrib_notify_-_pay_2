@@ -114,7 +114,7 @@ async function handleGet(req, res) {
             };
         });
 
-        // --- START: New Statistics Calculation (FIXED) ---
+        // --- START: Statistics Calculation ---
             
         // 1. Filter data by status
         const paidData = data.filter(item => item.status === 'paid');
@@ -122,7 +122,7 @@ async function handleGet(req, res) {
         const failedData = data.filter(item => item.status === 'failed');
         const canceledData = data.filter(item => item.status === 'canceled');
 
-        // 2. Helper function to count payment methods in a dataset
+        // 2. Helper function to count payment methods
         const countMethods = (dataset) => {
             let cashplus = 0;
             let card = 0;
@@ -135,19 +135,30 @@ async function handleGet(req, res) {
             }
             return { cashplus, card };
         };
+        
+        // 3. Helper function to sum revenue
+        const sumRevenue = (dataset) => {
+            return dataset.reduce((sum, item) => sum + item.finalAmount, 0);
+        };
 
-        // 3. Calculate breakdowns
+        // 4. Calculate breakdowns
         const paidBreakdown = countMethods(paidData);
         const pendingBreakdown = countMethods(pendingData);
         const failedBreakdown = countMethods(failedData);
         const canceledBreakdown = countMethods(canceledData);
-        const totalBreakdown = countMethods(data); // For the total chart
+        const totalBreakdown = countMethods(data);
 
-        // 4. Assemble the final stats object
+        // 5. Assemble the final stats object
         const stats = {
             // Total counts
             totalPayments: data.length,
-            totalRevenue: data.reduce((sum, item) => sum + item.finalAmount, 0),
+            
+            // --- NEW Revenue Breakdown ---
+            netRevenue: sumRevenue(paidData),
+            pendingRevenue: sumRevenue(pendingData),
+            failedRevenue: sumRevenue(failedData),
+            canceledRevenue: sumRevenue(canceledData),
+            // --- END NEW Revenue Breakdown ---
             
             // Status counts
             paidPayments: paidData.length,
@@ -160,28 +171,23 @@ async function handleGet(req, res) {
             frenchUsers: data.filter(item => item.language === 'fr').length,
             englishUsers: data.filter(item => item.language === 'en').length,
 
-            // --- NEW: Payment Method Breakdowns ---
-            // Total breakdown (for the chart)
+            // Payment Method Breakdowns
             cashplusPayments: totalBreakdown.cashplus,
             cardPayments: totalBreakdown.card,
             
-            // Paid breakdown
             paid_cashplus: paidBreakdown.cashplus,
             paid_card: paidBreakdown.card,
             
-            // Pending breakdown
             pending_cashplus: pendingBreakdown.cashplus,
             pending_card: pendingBreakdown.card,
 
-            // Failed breakdown
             failed_cashplus: failedBreakdown.cashplus,
             failed_card: failedBreakdown.card,
 
-            // Canceled breakdown
             canceled_cashplus: canceledBreakdown.cashplus,
             canceled_card: canceledBreakdown.card
         };
-        // --- END: New Statistics Calculation (FIXED) ---
+        // --- END: Statistics Calculation ---
 
         res.status(200).json({
             success: true,
