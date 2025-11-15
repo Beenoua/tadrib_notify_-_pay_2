@@ -2,29 +2,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-
-// Input validation and sanitization helpers
-function validateEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-function validatePhone(phone) {
-  // Moroccan phone validation (simplified)
-  const phoneRegex = /^(\+212|00212|212|0)?[6-7]\d{8}$/;
-  return phoneRegex.test(phone.replace(/[\s\-]/g, ''));
-}
-
-function sanitizeString(str) {
-  return str ? str.toString().trim().replace(/[<>\"'&]/g, '') : '';
-}
-
-function validateRequired(data, fields) {
-  const missing = fields.filter(field => !data[field] || data[field].toString().trim() === '');
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
-  }
-}
+import { validateEmail, validatePhone, sanitizeString, validateRequired, normalizePhone, sanitizeTelegramHTML } from './utils.js';
 
 // 2. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
