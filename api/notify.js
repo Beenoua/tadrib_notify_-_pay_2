@@ -20,51 +20,6 @@ if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
 // 3. تهيئة Google Sheet
 let doc;
 
-// تنظيف HTML قبل إرساله للتيليغرام
-function sanitizeTelegramHTML(text) {
-  if (typeof text !== 'string') return text;
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function normalizePhone(phone) {
-  if (!phone) return null;
-
-  // حذف المسافات و الرموز
-  phone = phone.replace(/[\s\-]/g, '');
-
-  // 1) إذا بدى بـ +212 => خليه كما هو ولكن صححو
-  if (phone.startsWith('+212')) {
-    return '+212' + phone.slice(4); // نتأكد مزال فيه 6XXXXXXXX
-  }
-
-  // 2) إذا بدى بـ 00212 => حولو لـ +212
-  if (phone.startsWith('00212')) {
-    return '+212' + phone.slice(5);
-  }
-
-  // 3) إذا بدى بـ 212 (بلا +) => حولو لـ +212
-  if (phone.startsWith('212')) {
-    return '+212' + phone.slice(3);
-  }
-
-  // 4) إذا بدى بـ 0 => حذف 0 وإضافة +212
-  if (phone.startsWith('0')) {
-    return '+212' + phone.slice(1);
-  }
-
-  // 5) إذا بدى بـ 6 مباشرة => ضيف +212
-  if (phone.startsWith('6')) {
-    return '+212' + phone;
-  }
-
-  // fallback
-  return phone;
-}
-
-
 // ترجمة الرسائل
 const telegramTranslations = {
   ar: {
