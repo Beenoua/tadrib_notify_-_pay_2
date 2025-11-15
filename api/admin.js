@@ -59,25 +59,36 @@ export default async function handler(req, res) {
         const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
         await doc.loadInfo();
 
-        const sheet = doc.sheetsByIndex[0]; // Assuming first sheet
+        // Try to get the "Leads" sheet first, fallback to first sheet
+        let sheet;
+        try {
+            sheet = doc.sheetsByTitle["Leads"];
+        } catch (e) {
+            sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
+        }
+
+        if (!sheet) {
+            return res.status(500).json({ error: 'No sheets found in the spreadsheet' });
+        }
+
         const rows = await sheet.getRows();
 
-        // Process and clean the data
+        // Process and clean the data from notify-fixed.js format
         const data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
-            status: row.get('Status') || '',
+            status: row.get('Payment Status') || 'pending',
             transactionId: row.get('Transaction ID') || '',
             amount: parseFloat(row.get('Amount')) || 0,
             currency: row.get('Currency') || 'MAD',
-            customerName: row.get('Customer Name') || '',
-            customerEmail: row.get('Customer Email') || '',
-            customerPhone: row.get('Customer Phone') || '',
-            course: row.get('Course') || '',
+            customerName: row.get('Full Name') || '',
+            customerEmail: row.get('Email') || '',
+            customerPhone: row.get('Phone Number') || '',
+            course: row.get('Selected Course') || '',
             qualification: row.get('Qualification') || '',
             experience: row.get('Experience') || '',
             paymentMethod: row.get('Payment Method') || '',
-            language: row.get('Language') || '',
-            finalAmount: parseFloat(row.get('Final Amount')) || 0,
+            language: row.get('Lang') || '',
+            finalAmount: parseFloat(row.get('Amount')) || 0,
             cashplusCode: row.get('CashPlus Code') || '',
             inquiryId: row.get('Inquiry ID') || ''
         }));
