@@ -2,7 +2,7 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { validateRequired, validateEmail } from './utils.js';
 
-// Simple authentication (can be enhanced with JWT or database later)
+// Simple authentication
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     } else if (req.method === 'DELETE') {
         return handleDelete(req, res);
     } else {
-        return res.status(405).json({ error: 'Method not allowed' });
+        res.status(405).json({ error: 'Method not allowed' });
     }
 }
 
@@ -68,7 +68,6 @@ async function handleGet(req, res) {
         const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
         await doc.loadInfo();
 
-        // Try to get the "Leads" sheet first, fallback to first sheet
         let sheet;
         try {
             sheet = doc.sheetsByTitle["Leads"];
@@ -82,20 +81,16 @@ async function handleGet(req, res) {
 
         const rows = await sheet.getRows();
 
-       // --- START FIX: Replace the entire rows.map block ---
+        // Process and clean the data
         const data = rows.map(row => {
-            // --- FIX for 'undefined' status (Robust) ---
             let cleanStatus = row.get('Payment Status');
-            // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
             if (!cleanStatus || typeof cleanStatus !== 'string' || cleanStatus.trim() === '' || cleanStatus.trim().toLowerCase() === 'undefined') {
                 cleanStatus = 'pending';
             }
-            // --- END FINAL FIX ---
 
-            // --- Return the full object ---
             return {
                 timestamp: row.get('Timestamp') || '',
-                status: cleanStatus, // Use cleaned status
+                status: cleanStatus.trim().toLowerCase(),
                 transactionId: row.get('Transaction ID') || '',
                 amount: parseFloat(row.get('Amount')) || 0,
                 currency: row.get('Currency') || 'MAD',
@@ -105,36 +100,21 @@ async function handleGet(req, res) {
                 course: row.get('Selected Course') || '',
                 qualification: row.get('Qualification') || '',
                 experience: row.get('Experience') || '',
-                utm_source: row.get('utm_source') || '',
-                utm_medium: row.get('utm_medium') || '',
-                utm_campaign: row.get('utm_campaign') || '',
-                utm_term: row.get('utm_term') || '',
-                utm_content: row.get('utm_content') || '',
                 paymentMethod: row.get('Payment Method') || '',
                 language: row.get('Lang') || '',
                 finalAmount: parseFloat(row.get('Amount')) || 0,
                 cashplusCode: row.get('CashPlus Code') || '',
-                last4: row.get('Last4Digits') || '', 
-                inquiryId: row.get('Inquiry ID') || ''
+                last4: row.get('Last4Digits') || '',
+                inquiryId: row.get('Inquiry ID') || '',
+                utm_source: row.get('utm_source') || '',
+                utm_medium: row.get('utm_medium') || '',
+                utm_campaign: row.get('utm_campaign') || '',
+                utm_term: row.get('utm_term') || '',
+                utm_content: row.get('utm_content') || ''
             };
         });
-        // --- END FIX ---
 
-        // Calculate statistics
-        const stats = {
-            totalPayments: data.length,
-            totalRevenue: data.reduce((sum, item) => sum + item.finalAmount, 0),
-            paidPayments: data.filter(item => item.status === 'paid').length,
-            pendingPayments: data.filter(item => item.status === 'pending').length,
-            failedPayments: data.filter(item => item.status === 'failed').length,
-            canceledPayments: data.filter(item => item.status === 'canceled').length,
-            cashplusPayments: data.filter(item => item.paymentMethod === 'cashplus').length,
-            cardPayments: data.filter(item => item.paymentMethod === 'card').length,
-            arabicUsers: data.filter(item => item.language === 'ar').length,
-            frenchUsers: data.filter(item => item.language === 'fr').length,
-            englishUsers: data.filter(item => item.language === 'en').length
-        };
-// --- START: New Statistics Calculation ---
+        // --- START: New Statistics Calculation (FIXED) ---
             
         // 1. Filter data by status
         const paidData = data.filter(item => item.status === 'paid');
@@ -201,7 +181,8 @@ async function handleGet(req, res) {
             canceled_cashplus: canceledBreakdown.cashplus,
             canceled_card: canceledBreakdown.card
         };
-        // --- END: New Statistics Calculation ---
+        // --- END: New Statistics Calculation (FIXED) ---
+
         res.status(200).json({
             success: true,
             data: data,
@@ -261,7 +242,6 @@ async function handlePut(req, res) {
         const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
         await doc.loadInfo();
 
-        // Try to get the "Leads" sheet first, fallback to first sheet
         let sheet;
         try {
             sheet = doc.sheetsByTitle["Leads"];
@@ -293,13 +273,9 @@ async function handlePut(req, res) {
         if (updateData.paymentMethod !== undefined) row.set('Payment Method', updateData.paymentMethod);
         if (updateData.finalAmount !== undefined) row.set('Amount', updateData.finalAmount.toString());
         if (updateData.language !== undefined) row.set('Lang', updateData.language);
-        
-        // --- NEW EDITABLE FIELDS ---
         if (updateData.qualification !== undefined) row.set('Qualification', updateData.qualification);
         if (updateData.experience !== undefined) row.set('Experience', updateData.experience);
         if (updateData.utm_source !== undefined) row.set('utm_source', updateData.utm_source);
-        // --- END NEW FIELDS ---
-
 
         await row.save();
 
@@ -360,7 +336,6 @@ async function handleDelete(req, res) {
         const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
         await doc.loadInfo();
 
-        // Try to get the "Leads" sheet first, fallback to first sheet
         let sheet;
         try {
             sheet = doc.sheetsByTitle["Leads"];
@@ -399,8 +374,3 @@ async function handleDelete(req, res) {
         });
     }
 }
-
-
-
-
-
