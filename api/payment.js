@@ -1,29 +1,7 @@
 // --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import axios from 'axios';
 import { Buffer } from 'buffer';
-
-// Input validation helpers
-function validateEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-function validatePhone(phone) {
-  // Moroccan phone validation (simplified)
-  const phoneRegex = /^(\+212|00212|212|0)?[6-7]\d{8}$/;
-  return phoneRegex.test(phone.replace(/[\s\-]/g, ''));
-}
-
-function validateRequired(data, fields) {
-  const missing = fields.filter(field => !data[field] || data[field].toString().trim() === '');
-  if (missing.length > 0) {
-    throw new Error(`Missing required fields: ${missing.join(', ')}`);
-  }
-}
-
-function sanitizeString(str) {
-  return str ? str.toString().trim().replace(/[<>\"'&]/g, '') : '';
-}
+import { validateEmail, validatePhone, sanitizeString, validateRequired } from './utils.js';
 
 const courseData = {
   pmp: { originalPrice: 2800 },
