@@ -84,9 +84,11 @@ async function handleGet(req, res) {
 
        // --- START FIX: Replace the entire rows.map block ---
         const data = rows.map(row => {
-            // --- FIX for 'undefined' status ---
-            const rowStatus = row.get('Payment Status');
-            const cleanStatus = (!rowStatus || rowStatus.toLowerCase() === 'undefined' || rowStatus.trim() === '') ? 'pending' : rowStatus;
+            // --- FIX for 'undefined' status (Robust) ---
+            let cleanStatus = row.get('Payment Status');
+            if (!cleanStatus || typeof cleanStatus !== 'string' || cleanStatus.trim() === '' || cleanStatus.toLowerCase() === 'undefined') {
+                cleanStatus = 'pending';
+            }
             // --- END FIX ---
 
             // --- Return the full object ---
@@ -328,4 +330,5 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
