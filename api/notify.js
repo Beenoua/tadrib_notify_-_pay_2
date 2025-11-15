@@ -155,10 +155,11 @@ export default async (req, res) => {
     
     // 2. Clean the raw status (robustly)
     // Check for null, undefined value, empty string, or "undefined" string
-    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.toLowerCase() === 'undefined') {
+    // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
+    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.trim().toLowerCase() === 'undefined') {
         rawStatus = 'pending'; // Default to 'pending' if it's invalid
     }
-    // --- END ROBUST FIX ---
+    // --- END FINAL FIX ---
 
     // جميع البيانات المهيكلة
     const normalizedData = {
@@ -274,6 +275,7 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(400).json({ error: "Bad Request", message: clientMessage });
   }
 };
+
 
 
 
