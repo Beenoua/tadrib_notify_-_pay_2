@@ -83,7 +83,10 @@ async function handleGet(req, res) {
         const rows = await sheet.getRows();
 
         // Process and clean the data from notify-fixed.js format
-        const data = rows.map(row => ({
+        const data = rows.map(row => {
+            const rowStatus = row.get('Payment Status');
+            const cleanStatus = (!rowStatus || rowStatus.toLowerCase() === 'undefined' || rowStatus.trim() === '') ? 'pending' : rowStatus;
+            return {
             timestamp: row.get('Timestamp') || '',
             status: row.get('Payment Status') || 'pending',
             transactionId: row.get('Transaction ID') || '',
@@ -321,3 +324,4 @@ async function handleDelete(req, res) {
         });
     }
 }
+
