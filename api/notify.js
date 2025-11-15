@@ -122,7 +122,14 @@ export default async (req, res) => {
     const lang = data.metadata?.lang || data.currentLang || 'fr';
     const t = telegramTranslations[lang];
 
-    const isWebhook = data.metadata && data.customer;
+    const isWebhook =
+    data.object === "event" ||               // Stripe style
+    data.customer ||                         // Card payments send customer object
+    data.metadata?.paymentMethod ||          // UTM metadata
+    data.payment_method ||                   // General card field
+    data.transaction_id ||                   // All card payments have transaction_id
+    data.status;                             // paid / pending_cashplus / etc
+
 
     // Validate required fields for webhook
     if (isWebhook) {
@@ -257,3 +264,4 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(400).json({ error: "Bad Request", message: clientMessage });
   }
 };
+
