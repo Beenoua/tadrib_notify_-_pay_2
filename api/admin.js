@@ -127,6 +127,7 @@ async function handleGet(req, res) {
             paidPayments: data.filter(item => item.status === 'paid').length,
             pendingPayments: data.filter(item => item.status === 'pending').length,
             failedPayments: data.filter(item => item.status === 'failed').length,
+            canceledPayments: data.filter(item => item.status === 'canceled').length,
             cashplusPayments: data.filter(item => item.paymentMethod === 'cashplus').length,
             cardPayments: data.filter(item => item.paymentMethod === 'card').length,
             arabicUsers: data.filter(item => item.language === 'ar').length,
@@ -331,6 +332,7 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
 
