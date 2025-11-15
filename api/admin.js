@@ -2,8 +2,7 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { validateRequired, validateEmail } from './utils.js';
 
-// Load .env.local for local development
-dotenv.config({ path: '.env.local' });
+
 
 // Simple authentication (can be enhanced with JWT or database later)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -309,4 +308,3 @@ async function handleDelete(req, res) {
         });
     }
 }
-
