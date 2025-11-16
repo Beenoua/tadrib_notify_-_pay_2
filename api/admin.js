@@ -33,54 +33,72 @@ export default async function handler(req, res) {
     }
 }
 
+// --- START: الإضافة الأولى (إضافة الدوال المساعدة) ---
+// قم بلصق هاتين الدالتين الجديدتين بالكامل هنا
+// (NEW) Function to authenticate requests
+async function authenticate(req, res) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Basic ')) {
+        res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
+        res.status(401).json({ error: 'Authentication required' });
+        return false;
+    }
+
+    const base64Credentials = authHeader.split(' ')[1];
+    const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+    const [username, password] = credentials.split(':');
+
+    if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
+        res.status(401).json({ error: 'Invalid credentials' });
+        return false;
+    }
+    return true; // Authentication successful
+}
+
+// (NEW) Function to connect to Google Sheets
+async function getGoogleSheet() {
+    // Validate environment variables
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
+
+    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+        console.error('Missing Google Sheets environment variables');
+        throw new Error('Server configuration error');
+    }
+
+    // Initialize Google Sheets
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    await doc.loadInfo();
+
+    // Try to get the "Leads" sheet first, fallback to first sheet
+    let sheet;
+    try {
+        sheet = doc.sheetsByTitle["Leads"];
+    } catch (e) {
+        sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
+    }
+
+    if (!sheet) {
+        throw new Error('No sheets found in the spreadsheet');
+    }
+    return sheet;
+}
+// --- END: الإضافة الأولى ---
+
 async function handleGet(req, res) {
 
     try {
-        // Basic authentication
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Basic ')) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
-            return res.status(401).json({ error: 'Authentication required' });
-        }
-
-        const base64Credentials = authHeader.split(' ')[1];
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-        const [username, password] = credentials.split(':');
-
-        if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        // Validate environment variables
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
-
-        if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-            console.error('Missing Google Sheets environment variables');
-            return res.status(500).json({ error: 'Server configuration error' });
-        }
-
-        // Initialize Google Sheets
-        const serviceAccountAuth = new JWT({
-            email: serviceAccountEmail,
-            key: privateKey,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-
-        const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-        await doc.loadInfo();
-
-        let sheet;
-        try {
-            sheet = doc.sheetsByTitle["Leads"];
-        } catch (e) {
-            sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
-        }
-
-        if (!sheet) {
-            return res.status(500).json({ error: 'No sheets found in the spreadsheet' });
-        }
+    // (ADD) أضف هذين السطرين بدلاً منهما
+        if (!await authenticate(req, res)) return; // Authenticate
+        const sheet = await getGoogleSheet(); // Connect to sheet
+        // --- END: الإضافة الثانية ---  
 
         const rows = await sheet.getRows();
 
@@ -256,57 +274,13 @@ async function handlePost(req, res) {
 
 async function handlePut(req, res) {
     try {
-        // Basic authentication
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Basic ')) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
-            return res.status(401).json({ error: 'Authentication required' });
-        }
+        // (ADD) أضف هذا السطر في البداية
+        if (!await authenticate(req, res)) return; // Authenticate
+        // ... (كود updateData) ...
 
-        const base64Credentials = authHeader.split(' ')[1];
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-        const [username, password] = credentials.split(':');
-
-        if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        const { inquiryId, ...updateData } = req.body;
-
-        if (!inquiryId) {
-            return res.status(400).json({ error: 'Inquiry ID is required' });
-        }
-
-        // Validate environment variables
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
-
-        if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-            console.error('Missing Google Sheets environment variables');
-            return res.status(500).json({ error: 'Server configuration error' });
-        }
-
-        // Initialize Google Sheets
-        const serviceAccountAuth = new JWT({
-            email: serviceAccountEmail,
-            key: privateKey,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-
-        const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-        await doc.loadInfo();
-
-        let sheet;
-        try {
-            sheet = doc.sheetsByTitle["Leads"];
-        } catch (e) {
-            sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
-        }
-
-        if (!sheet) {
-            return res.status(500).json({ error: 'No sheets found in the spreadsheet' });
-        }
+        // (ADD) وأضف هذا السطر قبل `getRows`
+        const sheet = await getGoogleSheet(); // Connect to sheet
+        // --- END: الإضافة الثالثة ---
 
         const rows = await sheet.getRows();
 
@@ -350,57 +324,13 @@ async function handlePut(req, res) {
 
 async function handleDelete(req, res) {
     try {
-        // Basic authentication
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Basic ')) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
-            return res.status(401).json({ error: 'Authentication required' });
-        }
+       // (ADD) أضف هذا السطر في البداية
+        if (!await authenticate(req, res)) return; // Authenticate
+        // ... (كود id) ...
 
-        const base64Credentials = authHeader.split(' ')[1];
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-        const [username, password] = credentials.split(':');
-
-        if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-
-        const { id } = req.body;
-
-        if (!id) {
-            return res.status(400).json({ error: 'ID is required' });
-        }
-
-        // Validate environment variables
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n').replace(/\\\\n/g, '\n');
-
-        if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-            console.error('Missing Google Sheets environment variables');
-            return res.status(500).json({ error: 'Server configuration error' });
-        }
-
-        // Initialize Google Sheets
-        const serviceAccountAuth = new JWT({
-            email: serviceAccountEmail,
-            key: privateKey,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-
-        const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-        await doc.loadInfo();
-
-        let sheet;
-        try {
-            sheet = doc.sheetsByTitle["Leads"];
-        } catch (e) {
-            sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
-        }
-
-        if (!sheet) {
-            return res.status(500).json({ error: 'No sheets found in the spreadsheet' });
-        }
+        // (ADD) وأضف هذا السطر قبل `getRows`
+        const sheet = await getGoogleSheet(); // Connect to sheet
+        // --- END: الإضافة الرابعة --- 
 
         const rows = await sheet.getRows();
 
@@ -429,6 +359,7 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
 
