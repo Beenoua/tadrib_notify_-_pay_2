@@ -1,11 +1,17 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { validateRequired, validateEmail } from './utils.js';
+// ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
+// import { validateRequired, validateEmail } from './utils.js'; 
 
 // Simple authentication
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
+/**
+ * ===================================================================
+ * Main Handler (Routes requests)
+ * ===================================================================
+ */
 export default async function handler(req, res) {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,9 +27,8 @@ export default async function handler(req, res) {
     // Handle different HTTP methods
     if (req.method === 'GET') {
         return handleGet(req, res);
-        } else if (req.method === 'POST') { // <-- (أضف هذا)
-        // (NEW) Handle POST requests
-        return handlePost(req, res); // <-- (أضف هذا)
+    } else if (req.method === 'POST') {
+        return handlePost(req, res);
     } else if (req.method === 'PUT') {
         return handlePut(req, res);
     } else if (req.method === 'DELETE') {
@@ -33,9 +38,15 @@ export default async function handler(req, res) {
     }
 }
 
-// --- START: الإضافة الأولى (إضافة الدوال المساعدة) ---
-// قم بلصق هاتين الدالتين الجديدتين بالكامل هنا
-// (NEW) Function to authenticate requests
+/**
+ * ===================================================================
+ * Helper Functions (Authentication & Sheet Connection)
+ * ===================================================================
+ */
+
+/**
+ * (NEW) Function to authenticate requests
+ */
 async function authenticate(req, res) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Basic ')) {
@@ -55,7 +66,9 @@ async function authenticate(req, res) {
     return true; // Authentication successful
 }
 
-// (NEW) Function to connect to Google Sheets
+/**
+ * (NEW) Function to connect to Google Sheets
+ */
 async function getGoogleSheet() {
     // Validate environment variables
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -90,15 +103,21 @@ async function getGoogleSheet() {
     }
     return sheet;
 }
-// --- END: الإضافة الأولى ---
 
+
+/**
+ * ===================================================================
+ * HTTP Method Handlers
+ * ===================================================================
+ */
+
+/**
+ * (GET) Fetches all data and statistics
+ */
 async function handleGet(req, res) {
-
     try {
-    // (ADD) أضف هذين السطرين بدلاً منهما
         if (!await authenticate(req, res)) return; // Authenticate
         const sheet = await getGoogleSheet(); // Connect to sheet
-        // --- END: الإضافة الثانية ---  
 
         const rows = await sheet.getRows();
 
@@ -136,14 +155,11 @@ async function handleGet(req, res) {
         });
 
         // --- START: Statistics Calculation ---
-            
-        // 1. Filter data by status
         const paidData = data.filter(item => item.status === 'paid');
         const pendingData = data.filter(item => item.status === 'pending');
         const failedData = data.filter(item => item.status === 'failed');
         const canceledData = data.filter(item => item.status === 'canceled');
 
-        // 2. Helper function to count payment methods
         const countMethods = (dataset) => {
             let cashplus = 0;
             let card = 0;
@@ -157,54 +173,37 @@ async function handleGet(req, res) {
             return { cashplus, card };
         };
         
-        // 3. Helper function to sum revenue
         const sumRevenue = (dataset) => {
             return dataset.reduce((sum, item) => sum + item.finalAmount, 0);
         };
 
-        // 4. Calculate breakdowns
         const paidBreakdown = countMethods(paidData);
         const pendingBreakdown = countMethods(pendingData);
         const failedBreakdown = countMethods(failedData);
         const canceledBreakdown = countMethods(canceledData);
         const totalBreakdown = countMethods(data);
 
-        // 5. Assemble the final stats object
         const stats = {
-            // Total counts
             totalPayments: data.length,
-            
-            // --- NEW Revenue Breakdown ---
             netRevenue: sumRevenue(paidData),
             pendingRevenue: sumRevenue(pendingData),
             failedRevenue: sumRevenue(failedData),
             canceledRevenue: sumRevenue(canceledData),
-            // --- END NEW Revenue Breakdown ---
-            
-            // Status counts
             paidPayments: paidData.length,
             pendingPayments: pendingData.length,
             failedPayments: failedData.length,
             canceledPayments: canceledData.length,
-
-            // Language counts
             arabicUsers: data.filter(item => item.language === 'ar').length,
             frenchUsers: data.filter(item => item.language === 'fr').length,
             englishUsers: data.filter(item => item.language === 'en').length,
-
-            // Payment Method Breakdowns
             cashplusPayments: totalBreakdown.cashplus,
             cardPayments: totalBreakdown.card,
-            
             paid_cashplus: paidBreakdown.cashplus,
             paid_card: paidBreakdown.card,
-            
             pending_cashplus: pendingBreakdown.cashplus,
             pending_card: pendingBreakdown.card,
-
             failed_cashplus: failedBreakdown.cashplus,
             failed_card: failedBreakdown.card,
-
             canceled_cashplus: canceledBreakdown.cashplus,
             canceled_card: canceledBreakdown.card
         };
@@ -218,19 +217,22 @@ async function handleGet(req, res) {
         });
 
     } catch (error) {
-        console.error('Admin API Error:', error);
+        console.error('Admin GET API Error:', error);
         res.status(500).json({
             error: 'Internal server error',
             message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
         });
     }
 }
-// (NEW) Handle POST to create a new record
+
+/**
+ * (POST) Creates a new record
+ */
 async function handlePost(req, res) {
     try {
         if (!await authenticate(req, res)) return; // Authenticate
-
         const sheet = await getGoogleSheet(); // Connect to sheet
+        
         const newData = req.body;
 
         // Generate required IDs and timestamp
@@ -252,7 +254,6 @@ async function handlePost(req, res) {
             'Qualification': newData.qualification,
             'Experience': newData.experience,
             'utm_source': newData.utm_source || 'manual',
-            // Add any other fields from your "Add Modal" here
         };
 
         await sheet.addRow(newRow);
@@ -272,16 +273,22 @@ async function handlePost(req, res) {
     }
 }
 
+/**
+ * (PUT) Updates an existing record
+ */
 async function handlePut(req, res) {
     try {
-        // (ADD) أضف هذا السطر في البداية
         if (!await authenticate(req, res)) return; // Authenticate
-        // ... (كود updateData) ...
 
-        // (ADD) وأضف هذا السطر قبل `getRows`
+        // --- START: (FIX) إضافة الكود المفقود ---
+        const { inquiryId, ...updateData } = req.body;
+
+        if (!inquiryId) {
+            return res.status(400).json({ error: 'Inquiry ID is required' });
+        }
+        // --- END: (FIX) ---
+        
         const sheet = await getGoogleSheet(); // Connect to sheet
-        // --- END: الإضافة الثالثة ---
-
         const rows = await sheet.getRows();
 
         // Find the row with matching inquiryId
@@ -322,22 +329,22 @@ async function handlePut(req, res) {
     }
 }
 
+/**
+ * (DELETE) Deletes an existing record
+ */
 async function handleDelete(req, res) {
     try {
-       // (ADD) أضف هذا السطر في البداية
         if (!await authenticate(req, res)) return; // Authenticate
-        // ... (كود id) ...
- // --- START: إضافة الكود المفقود ---
+
+        // --- START: (FIX) إضافة الكود المفقود ---
         const { id } = req.body;
 
         if (!id) {
             return res.status(400).json({ error: 'ID is required' });
         }
-        // --- END: إضافة الكود المفقود ---
-        // (ADD) وأضف هذا السطر قبل `getRows`
-        const sheet = await getGoogleSheet(); // Connect to sheet
-        // --- END: الإضافة الرابعة --- 
+        // --- END: (FIX) ---
 
+        const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
         // Find the row with matching id (inquiryId or transactionId)
