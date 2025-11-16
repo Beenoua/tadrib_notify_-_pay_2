@@ -236,7 +236,7 @@ async function handlePost(req, res) {
         const newData = req.body;
 
         // Generate required IDs and timestamp
-        const timestamp = new Date().toISOString();
+        const timestamp = getFormattedTimestamp(new Date()); // (ADD)
         const inquiryId = `MANUAL-${Date.now()}`;
 
         // Map data to sheet headers
@@ -372,3 +372,4 @@ async function handleDelete(req, res) {
         });
     }
 }
+
