@@ -327,7 +327,13 @@ async function handleDelete(req, res) {
        // (ADD) أضف هذا السطر في البداية
         if (!await authenticate(req, res)) return; // Authenticate
         // ... (كود id) ...
+ // --- START: إضافة الكود المفقود ---
+        const { id } = req.body;
 
+        if (!id) {
+            return res.status(400).json({ error: 'ID is required' });
+        }
+        // --- END: إضافة الكود المفقود ---
         // (ADD) وأضف هذا السطر قبل `getRows`
         const sheet = await getGoogleSheet(); // Connect to sheet
         // --- END: الإضافة الرابعة --- 
@@ -359,7 +365,3 @@ async function handleDelete(req, res) {
         });
     }
 }
-
-
-
-
