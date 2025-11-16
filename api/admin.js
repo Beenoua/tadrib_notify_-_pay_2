@@ -104,26 +104,6 @@ async function getGoogleSheet() {
     return sheet;
 }
 
-// --- START: (ADD) إضافة دالة تنسيق التاريخ المفقودة ---
-/**
- * (NEW) Formats a Date object into the custom string format
- * e.g., "2025-11-16 15 h 24 min 40 s"
- */
-function getFormattedTimestamp(date) {
-    //
-    // هذه الدالة ستقوم بإنشاء التنسيق الذي طلبته
-    //
-    const Y = date.getFullYear();
-    const M = (date.getMonth() + 1).toString().padStart(2, '0'); // Month is 0-indexed
-    const D = date.getDate().toString().padStart(2, '0');
-    const h = date.getHours().toString().padStart(2, '0');
-    const m = date.getMinutes().toString().padStart(2, '0');
-    const s = date.getSeconds().toString().padStart(2, '0');
-    
-    return `${Y}-${M}-${D} ${h} h ${m} min ${s} s`;
-}
-// --- END: (ADD) ---
-
 
 /**
  * ===================================================================
@@ -256,7 +236,7 @@ async function handlePost(req, res) {
         const newData = req.body;
 
         // Generate required IDs and timestamp
-        const timestamp = new Date().toISOString();        
+        const timestamp = new Date().toLocaleString('fr-CA'); 
         const inquiryId = `MANUAL-${Date.now()}`;
 
         // Map data to sheet headers
@@ -392,6 +372,7 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
 
