@@ -21,6 +21,9 @@ export default async function handler(req, res) {
     // Handle different HTTP methods
     if (req.method === 'GET') {
         return handleGet(req, res);
+        } else if (req.method === 'POST') { // <-- (أضف هذا)
+        // (NEW) Handle POST requests
+        return handlePost(req, res); // <-- (أضف هذا)
     } else if (req.method === 'PUT') {
         return handlePut(req, res);
     } else if (req.method === 'DELETE') {
@@ -380,3 +383,4 @@ async function handleDelete(req, res) {
         });
     }
 }
+
