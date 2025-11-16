@@ -207,6 +207,52 @@ async function handleGet(req, res) {
         });
     }
 }
+// (NEW) Handle POST to create a new record
+async function handlePost(req, res) {
+    try {
+        if (!await authenticate(req, res)) return; // Authenticate
+
+        const sheet = await getGoogleSheet(); // Connect to sheet
+        const newData = req.body;
+
+        // Generate required IDs and timestamp
+        const timestamp = new Date().toISOString();
+        const inquiryId = `MANUAL-${Date.now()}`;
+
+        // Map data to sheet headers
+        const newRow = {
+            'Timestamp': timestamp,
+            'Inquiry ID': inquiryId,
+            'Payment Status': newData.status || 'pending',
+            'Full Name': newData.customerName,
+            'Email': newData.customerEmail,
+            'Phone Number': newData.customerPhone,
+            'Selected Course': newData.course,
+            'Amount': newData.finalAmount.toString(),
+            'Payment Method': newData.paymentMethod,
+            'Lang': newData.language,
+            'Qualification': newData.qualification,
+            'Experience': newData.experience,
+            'utm_source': newData.utm_source || 'manual',
+            // Add any other fields from your "Add Modal" here
+        };
+
+        await sheet.addRow(newRow);
+
+        res.status(201).json({
+            success: true,
+            message: 'Record created successfully',
+            inquiryId: inquiryId
+        });
+
+    } catch (error) {
+        console.error('Admin POST API Error:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+        });
+    }
+}
 
 async function handlePut(req, res) {
     try {
@@ -383,4 +429,5 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
