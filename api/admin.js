@@ -7,13 +7,107 @@ import { JWT } from 'google-auth-library';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
+// ===================================================================
+// (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
+// ===================================================================
+
+function parseDate(ts) {
+    if (!ts) return null;
+    let date;
+    const isoTest = new Date(ts);
+    if (!isNaN(isoTest.getTime())) {
+        date = isoTest;
+    } else {
+        let cleaned = ts.replace(" h ", ":").replace(" min ", ":").replace(" s", "");
+        date = new Date(cleaned);
+    }
+    if (!isNaN(date.getTime())) { return date; }
+    return null;
+}
+
+function checkDateFilter(item, filterValue, customStart, customEnd) {
+    if (!filterValue || filterValue === 'all') { return true; }
+    const itemDate = item.parsedDate; // (تعديل) نفترض أن item.parsedDate موجود
+    if (!itemDate) { return false; }
+    
+    const now = new Date();
+    let startDate;
+    switch (filterValue) {
+        case 'hour': startDate = new Date(now.getTime() - (60 * 60 * 1000)); return itemDate >= startDate;
+        case 'day': startDate = new Date(now.getTime() - (24 * 60 * 60 * 1000)); return itemDate >= startDate;
+        case 'week': startDate = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)); return itemDate >= startDate;
+        case 'month': startDate = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)); return itemDate >= startDate;
+        case '3month': startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()); return itemDate >= startDate;
+        case '6month': startDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()); return itemDate >= startDate;
+        case 'year': startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); return itemDate >= startDate;
+        case 'custom':
+            if (customStart && customEnd) {
+                const start = new Date(customStart + 'T00:00:00'); 
+                const end = new Date(customEnd + 'T23:59:59');
+                return itemDate >= start && itemDate <= end;
+            }
+            return true;
+        default: return true;
+    }
+}
+
+function calculateStatistics(dataArray) {
+    const stats = {
+        totalPayments: dataArray.length, paidPayments: 0, pendingPayments: 0, failedPayments: 0, canceledPayments: 0,
+        cashplusPayments: 0, cardPayments: 0, arabicUsers: 0, frenchUsers: 0, englishUsers: 0,
+        netRevenue: 0, pendingRevenue: 0, failedRevenue: 0, canceledRevenue: 0,
+        paid_cashplus: 0, paid_card: 0, pending_cashplus: 0, pending_card: 0,
+        failed_cashplus: 0, failed_card: 0, canceled_cashplus: 0, canceled_card: 0,
+        net_cashplus_revenue: 0, net_card_revenue: 0,
+    };
+    if (!dataArray || dataArray.length === 0) return stats;
+
+    for (const item of dataArray) {
+        const amount = parseFloat(item.finalAmount) || 0;
+        const isCashplus = item.paymentMethod === 'cashplus';
+        const isCard = item.paymentMethod === 'card';
+
+        if (item.language === 'ar') stats.arabicUsers++;
+        if (item.language === 'fr') stats.frenchUsers++;
+        if (item.language === 'en') stats.englishUsers++;
+        if (isCashplus) stats.cashplusPayments++;
+        if (isCard) stats.cardPayments++;
+
+        switch (item.status) {
+            case 'paid':
+                stats.paidPayments++; stats.netRevenue += amount;
+                if (isCashplus) { stats.paid_cashplus++; stats.net_cashplus_revenue += amount; }
+                if (isCard) { stats.paid_card++; stats.net_card_revenue += amount; }
+                break;
+            case 'pending':
+                stats.pendingPayments++; stats.pendingRevenue += amount;
+                if (isCashplus) stats.pending_cashplus++;
+                if (isCard) stats.pending_card++;
+                break;
+            case 'failed':
+                stats.failedPayments++; stats.failedRevenue += amount;
+                if (isCashplus) stats.failed_cashplus++;
+                if (isCard) stats.failed_card++;
+                break;
+            case 'canceled':
+            case 'cancelled':
+                stats.canceledPayments++; stats.canceledRevenue += amount;
+                if (isCashplus) stats.canceled_cashplus++;
+                if (isCard) stats.canceled_card++;
+                break;
+        }
+    }
+    return stats;
+}
+
+
 /**
  * ===================================================================
  * Main Handler (Routes requests)
  * ===================================================================
  */
 export default async function handler(req, res) {
-    // CORS headers
+    // ... (CORS headers - لم يتغير)
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -40,12 +134,22 @@ export default async function handler(req, res) {
 
 /**
  * ===================================================================
- * (GET) Fetches all records and statistics
+ * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
 async function handleGet(req, res) {
     try {
         if (!await authenticate(req, res)) return; // Authenticate
+
+        // (NEW) قراءة الفلاتر من الرابط
+        const {
+            searchTerm,
+            statusFilter,
+            paymentFilter,
+            dateFilter,
+            startDate,
+            endDate
+        } = req.query;
 
         const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
@@ -71,68 +175,50 @@ async function handleGet(req, res) {
             utm_medium: row.get('utm_medium') || '',
             utm_campaign: row.get('utm_campaign') || '',
             utm_term: row.get('utm_term') || '',
-            utm_content: row.get('utm_content') || ''
+            utm_content: row.get('utm_content') || '',
+            // (NEW) إضافة تاريخ مهيأ للفلترة
+            parsedDate: parseDate(row.get('Timestamp') || '') 
         }));
-
-        // --- (START) (FIX) إصلاح حساب الإحصائيات ---
-        // 1. حساب الإحصائيات التفصيلية (لإصلاح مشكلة إيرادات كاش بلوس/بطاقة)
-        const stats = {
-            totalPayments: 0, // سنقوم بتعيينه لاحقاً
-            paidPayments: 0, pendingPayments: 0, failedPayments: 0, canceledPayments: 0,
-            cashplusPayments: 0, cardPayments: 0, arabicUsers: 0, frenchUsers: 0, englishUsers: 0,
-            netRevenue: 0, pendingRevenue: 0, failedRevenue: 0, canceledRevenue: 0,
-            paid_cashplus: 0, paid_card: 0, pending_cashplus: 0, pending_card: 0,
-            failed_cashplus: 0, failed_card: 0, canceled_cashplus: 0, canceled_card: 0,
-            net_cashplus_revenue: 0, net_card_revenue: 0,
-        };
-
-        if (data && data.length > 0) {
-            for (const item of data) { // تم التغيير إلى 'data' لضمان التطابق
-                const amount = parseFloat(item.finalAmount) || 0;
-                const isCashplus = item.paymentMethod === 'cashplus';
-                const isCard = item.paymentMethod === 'card';
-
-                if (item.language === 'ar') stats.arabicUsers++;
-                if (item.language === 'fr') stats.frenchUsers++;
-                if (item.language === 'en') stats.englishUsers++;
-                if (isCashplus) stats.cashplusPayments++;
-                if (isCard) stats.cardPayments++;
-
-                switch (item.status) {
-                    case 'paid':
-                        stats.paidPayments++; stats.netRevenue += amount;
-                        if (isCashplus) { stats.paid_cashplus++; stats.net_cashplus_revenue += amount; }
-                        if (isCard) { stats.paid_card++; stats.net_card_revenue += amount; }
-                        break;
-                    case 'pending':
-                        stats.pendingPayments++; stats.pendingRevenue += amount;
-                        if (isCashplus) stats.pending_cashplus++;
-                        if (isCard) stats.pending_card++;
-                        break;
-                    case 'failed':
-                        stats.failedPayments++; stats.failedRevenue += amount;
-                        if (isCashplus) stats.failed_cashplus++;
-                        if (isCard) stats.failed_card++;
-                        break;
-                    case 'canceled':
-                    case 'cancelled':
-                        stats.canceledPayments++; stats.canceledRevenue += amount;
-                        if (isCashplus) stats.canceled_cashplus++;
-                        if (isCard) stats.canceled_card++;
-                        break;
-                }
-            }
-        }
         
-        // 2. (إصلاح مشكلة 7 مقابل 9)
-        // ضمان تطابق العدد الإجمالي مع البيانات المرسلة
-        stats.totalPayments = data.length; 
-        // --- (END) (FIX) ---
+        // --- (NEW) منطق الفلترة والحساب المركزي ---
 
+        // 1. حساب الإحصائيات الإجمالية (دائماً)
+        const overallStats = calculateStatistics(data);
+
+        // 2. التحقق إذا كانت هناك فلاتر نشطة
+        const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
+
+        let filteredData = data;
+        let filteredStats = overallStats;
+
+        if (isFiltered) {
+            // 3. تطبيق الفلاتر
+            filteredData = data.filter(item => {
+                const search = searchTerm ? searchTerm.toLowerCase() : '';
+                const matchesSearch = !search ||
+                    Object.values(item).some(val => 
+                        String(val).toLowerCase().includes(search)
+                    );
+                const matchesStatus = !statusFilter || item.status === statusFilter;
+                const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
+                const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
+                
+                return matchesSearch && matchesStatus && matchesPayment && matchesDate;
+            });
+
+            // 4. حساب الإحصائيات المفلترة
+            filteredStats = calculateStatistics(filteredData);
+        }
+
+        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات
         res.status(200).json({
             success: true,
-            statistics: stats,
-            data: data
+            statistics: {
+                overall: overallStats,
+                filtered: filteredStats
+            },
+            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
+            isFiltered: isFiltered
         });
 
     } catch (error) {
@@ -143,13 +229,13 @@ async function handleGet(req, res) {
 
 /**
  * ===================================================================
- * (POST) Creates a new record
+ * (POST) Creates a new record (لم يتغير)
  * ===================================================================
  */
 async function handlePost(req, res) {
      try {
         if (!await authenticate(req, res)) return; // Authenticate
-
+// ... (باقي الكود لم يتغير)
         const sheet = await getGoogleSheet(); // Connect to sheet
         
         // (تعديل) إضافة بيانات الطلب إلى Google Sheet
@@ -189,13 +275,13 @@ async function handlePost(req, res) {
 
 /**
  * ===================================================================
- * (PUT) Updates an existing record
+ * (PUT) Updates an existing record (لم يتغير)
  * ===================================================================
  */
 async function handlePut(req, res) {
      try {
         if (!await authenticate(req, res)) return; // Authenticate
-
+// ... (باقي الكود لم يتغير)
         const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
         
@@ -247,13 +333,13 @@ async function handlePut(req, res) {
 
 /**
  * ===================================================================
- * (DELETE) Deletes an existing record
+ * (DELETE) Deletes an existing record (لم يتغير)
  * ===================================================================
  */
 async function handleDelete(req, res) {
     try {
         if (!await authenticate(req, res)) return; // Authenticate
-
+// ... (باقي الكود لم يتغير)
         // --- (START) (FIX) إصلاح وظيفة الحذف ---
         // كان هذا مفقوداً، مما تسبب في فشل كل عمليات الحذف
         const { id } = req.body;
@@ -292,10 +378,11 @@ async function handleDelete(req, res) {
 
 /**
  * ===================================================================
- * Helper Functions (Authentication & Google Sheet)
+ * Helper Functions (Authentication & Google Sheet) (لم يتغير)
  * ===================================================================
  */
 async function authenticate(req, res) {
+// ... (باقي الكود لم يتغير)
     const authHeader = req.headers.authorization;
     if (!authHeader) {
         res.status(401).json({ error: 'Authentication required' });
@@ -319,6 +406,7 @@ async function authenticate(req, res) {
 }
 
 async function getGoogleSheet() {
+// ... (باقي الكود لم يتغير)
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     // (FIX) إصلاح قراءة المفتاح الخاص
