@@ -154,60 +154,55 @@ async function handleGet(req, res) {
             };
         });
 
-        // --- START: Statistics Calculation ---
-        const paidData = data.filter(item => item.status === 'paid');
-        const pendingData = data.filter(item => item.status === 'pending');
-        const failedData = data.filter(item => item.status === 'failed');
-        const canceledData = data.filter(item => item.status === 'canceled');
+       // (تعديل) استبدال حاسبة الإحصائيات البسيطة بالحاسبة التفصيلية
+        // Calculate statistics (REPLACED BLOCK)
+        const stats = {
+            totalPayments: data.length, paidPayments: 0, pendingPayments: 0, failedPayments: 0, canceledPayments: 0,
+            cashplusPayments: 0, cardPayments: 0, arabicUsers: 0, frenchUsers: 0, englishUsers: 0,
+            netRevenue: 0, pendingRevenue: 0, failedRevenue: 0, canceledRevenue: 0,
+            paid_cashplus: 0, paid_card: 0, pending_cashplus: 0, pending_card: 0,
+            failed_cashplus: 0, failed_card: 0, canceled_cashplus: 0, canceled_card: 0,
+            net_cashplus_revenue: 0, net_card_revenue: 0,
+        };
 
-        const countMethods = (dataset) => {
-            let cashplus = 0;
-            let card = 0;
-            for (const item of dataset) {
-                if (item.paymentMethod === 'cashplus') {
-                    cashplus++;
-                } else if (item.paymentMethod === 'card') {
-                    card++;
+        if (data && data.length > 0) {
+            for (const item of data) {
+                const amount = parseFloat(item.finalAmount) || 0;
+                const isCashplus = item.paymentMethod === 'cashplus';
+                const isCard = item.paymentMethod === 'card';
+
+                if (item.language === 'ar') stats.arabicUsers++;
+                if (item.language === 'fr') stats.frenchUsers++;
+                if (item.language === 'en') stats.englishUsers++;
+                if (isCashplus) stats.cashplusPayments++;
+                if (isCard) stats.cardPayments++;
+
+                switch (item.status) {
+                    case 'paid':
+                        stats.paidPayments++; stats.netRevenue += amount;
+                        if (isCashplus) { stats.paid_cashplus++; stats.net_cashplus_revenue += amount; }
+                        if (isCard) { stats.paid_card++; stats.net_card_revenue += amount; }
+                        break;
+                    case 'pending':
+                        stats.pendingPayments++; stats.pendingRevenue += amount;
+                        if (isCashplus) stats.pending_cashplus++;
+                        if (isCard) stats.pending_card++;
+                        break;
+                    case 'failed':
+                        stats.failedPayments++; stats.failedRevenue += amount;
+                        if (isCashplus) stats.failed_cashplus++;
+                        if (isCard) stats.failed_card++;
+                        break;
+                    case 'canceled':
+                    case 'cancelled':
+                        stats.canceledPayments++; stats.canceledRevenue += amount;
+                        if (isCashplus) stats.canceled_cashplus++;
+                        if (isCard) stats.canceled_card++;
+                        break;
                 }
             }
-            return { cashplus, card };
-        };
-        
-        const sumRevenue = (dataset) => {
-            return dataset.reduce((sum, item) => sum + item.finalAmount, 0);
-        };
-
-        const paidBreakdown = countMethods(paidData);
-        const pendingBreakdown = countMethods(pendingData);
-        const failedBreakdown = countMethods(failedData);
-        const canceledBreakdown = countMethods(canceledData);
-        const totalBreakdown = countMethods(data);
-
-        const stats = {
-            totalPayments: data.length,
-            netRevenue: sumRevenue(paidData),
-            pendingRevenue: sumRevenue(pendingData),
-            failedRevenue: sumRevenue(failedData),
-            canceledRevenue: sumRevenue(canceledData),
-            paidPayments: paidData.length,
-            pendingPayments: pendingData.length,
-            failedPayments: failedData.length,
-            canceledPayments: canceledData.length,
-            arabicUsers: data.filter(item => item.language === 'ar').length,
-            frenchUsers: data.filter(item => item.language === 'fr').length,
-            englishUsers: data.filter(item => item.language === 'en').length,
-            cashplusPayments: totalBreakdown.cashplus,
-            cardPayments: totalBreakdown.card,
-            paid_cashplus: paidBreakdown.cashplus,
-            paid_card: paidBreakdown.card,
-            pending_cashplus: pendingBreakdown.cashplus,
-            pending_card: pendingBreakdown.card,
-            failed_cashplus: failedBreakdown.cashplus,
-            failed_card: failedBreakdown.card,
-            canceled_cashplus: canceledBreakdown.cashplus,
-            canceled_card: canceledBreakdown.card
-        };
-        // --- END: Statistics Calculation ---
+        }
+        // (نهاية التعديل)
 
         res.status(200).json({
             success: true,
@@ -372,6 +367,7 @@ async function handleDelete(req, res) {
         });
     }
 }
+
 
 
 
