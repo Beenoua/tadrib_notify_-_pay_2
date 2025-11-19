@@ -125,8 +125,13 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
         return handleGet(req, res);
     } else if (req.method === 'POST') {
-        // If path contains /login or /logout, handle them without prior authentication
+        // Support login/logout both when requests are targeted to /api/admin
+        // (Some platforms route /api/admin/login -> 404). Detect login by body fields.
         try {
+            // If body contains username+password, treat as login request
+            if (req.body && req.body.username && req.body.password) {
+                return handleLogin(req, res);
+            }
             const urlPath = req.url || '';
             if (urlPath.includes('/login')) {
                 return handleLogin(req, res);
