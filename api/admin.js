@@ -168,7 +168,8 @@ async function handleLogin(req, res) {
             // Set an HttpOnly session cookie. Use Secure in production.
             const maxAge = 24 * 60 * 60; // 1 day
             const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            const sameSite = 'Lax';
+            // For cross-site fetches we need SameSite=None and Secure in production
+            const sameSite = 'None';
             const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
             res.setHeader('Set-Cookie', cookie);
             return res.status(200).json({ success: true, message: 'Logged in' });
@@ -503,7 +504,7 @@ async function handleLogout(req, res) {
     try {
         // Clear cookie by setting Max-Age=0
         const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-        const sameSite = 'Lax';
+        const sameSite = 'None';
         const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
         res.setHeader('Set-Cookie', cookie);
         return res.status(200).json({ success: true, message: 'Logged out' });
