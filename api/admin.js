@@ -195,6 +195,7 @@ async function handleGet(req, res) {
             searchTerm,
             statusFilter,
             paymentFilter,
+            courseFilter,
             dateFilter,
             startDate,
             endDate
@@ -226,7 +227,8 @@ async function handleGet(req, res) {
             utm_term: row.get('utm_term') || '',
             utm_content: row.get('utm_content') || '',
             // (NEW) إضافة تاريخ مهيأ للفلترة
-            parsedDate: parseDate(row.get('Timestamp') || '') 
+            parsedDate: parseDate(row.get('Timestamp') || ''),
+            normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
         
         // --- (NEW) منطق الفلترة والحساب المركزي ---
@@ -250,9 +252,10 @@ async function handleGet(req, res) {
                     );
                 const matchesStatus = !statusFilter || item.status === statusFilter;
                 const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
+                const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
                 const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
                 
-                return matchesSearch && matchesStatus && matchesPayment && matchesDate;
+                return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
             });
 
             // 4. حساب الإحصائيات المفلترة
@@ -512,4 +515,30 @@ async function handleLogout(req, res) {
         console.error('Logout error', error);
         return res.status(500).json({ error: 'Internal server error' });
     }
+}
+
+// Normalize course names to shortcodes (same mapping as frontend)
+const COURSE_DEFINITIONS = {
+    'PMP': ['Gestion de Projet Professionnelle (PMP®)', 'Professional Project Management (PMP®)', 'الإدارة الاحترافية للمشاريع (PMP®)'],
+    'Planning': ['Préparation et Planification de Chantier', 'Site Preparation and Planning', 'إعداد وتخطيط المواقع'],
+    'QSE': ['Normes QSE en Chantier', 'QSE Standards on Sites', 'معايير QSE في المواقع'],
+    'Soft Skills': ['Soft Skills pour Managers', 'Soft Skills for Managers', 'المهارات الناعمة للمديرين']
+};
+
+function normalizeCourseName(raw) {
+    if (!raw) return 'دورات أخرى';
+    const trimmed = String(raw).trim();
+    if (trimmed === '' || trimmed.toLowerCase() === 'n/a') return 'غير محدد';
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('pmp')) return 'PMP';
+    if (lower.includes('planning')) return 'Planning';
+    if (lower.includes('qse')) return 'QSE';
+    if (lower.includes('softskills') || lower.includes('soft skills')) return 'Soft Skills';
+    // match translations
+    for (const shortcode in COURSE_DEFINITIONS) {
+        for (const t of COURSE_DEFINITIONS[shortcode]) {
+            if (t && typeof t === 'string' && t.trim().toLowerCase() === trimmed.toLowerCase()) return shortcode;
+        }
+    }
+    return 'دورات أخرى';
 }
