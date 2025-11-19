@@ -107,21 +107,36 @@ function calculateStatistics(dataArray) {
  * ===================================================================
  */
 export default async function handler(req, res) {
-    // ... (CORS headers - لم يتغير)
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS: allow the requesting origin and support credentials (cookies)
+    const origin = req.headers.origin || '*';
+    // When using credentials, Access-Control-Allow-Origin must be explicit (cannot be '*')
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // Handle preflight requests
+    // Handle preflight requests (ensure credentials header present)
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
 
-    // Handle different HTTP methods
+    // Handle different HTTP methods and a special /login POST route
     if (req.method === 'GET') {
         return handleGet(req, res);
     } else if (req.method === 'POST') {
+        // If path contains /login or /logout, handle them without prior authentication
+        try {
+            const urlPath = req.url || '';
+            if (urlPath.includes('/login')) {
+                return handleLogin(req, res);
+            }
+            if (urlPath.includes('/logout')) {
+                return handleLogout(req, res);
+            }
+        } catch (e) {
+            // ignore and proceed to normal POST handling
+        }
         return handlePost(req, res);
     } else if (req.method === 'PUT') {
         return handlePut(req, res);
@@ -129,6 +144,34 @@ export default async function handler(req, res) {
         return handleDelete(req, res);
     } else {
         return res.status(405).json({ error: 'Method not allowed' });
+    }
+}
+
+/**
+ * ===================================================================
+ * (POST) Login - sets an HttpOnly cookie for session-based auth
+ * ===================================================================
+ */
+async function handleLogin(req, res) {
+    try {
+        const { username, password } = req.body || {};
+        if (!username || !password) {
+            return res.status(400).json({ error: 'username and password required' });
+        }
+
+        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+            // Set an HttpOnly session cookie. Use Secure in production.
+            const maxAge = 24 * 60 * 60; // 1 day
+            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+            const sameSite = 'Lax';
+            const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
+            res.setHeader('Set-Cookie', cookie);
+            return res.status(200).json({ success: true, message: 'Logged in' });
+        }
+        return res.status(401).json({ error: 'Invalid credentials' });
+    } catch (error) {
+        console.error('Login error', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -382,7 +425,12 @@ async function handleDelete(req, res) {
  * ===================================================================
  */
 async function authenticate(req, res) {
-// ... (باقي الكود لم يتغير)
+// Accept either an HttpOnly cookie session or Basic Authorization header
+    const cookieHeader = req.headers.cookie || '';
+    if (cookieHeader.includes('admin_session=1')) {
+        return true;
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader) {
         res.status(401).json({ error: 'Authentication required' });
@@ -391,7 +439,12 @@ async function authenticate(req, res) {
     const token = authHeader.split(' ')[1];
     let decoded;
     try {
-        decoded = atob(token);
+        // atob may not exist in some Node runtimes; use Buffer fallback
+        if (typeof atob === 'function') {
+            decoded = atob(token);
+        } else {
+            decoded = Buffer.from(token, 'base64').toString('utf8');
+        }
     } catch (e) {
         res.status(401).json({ error: 'Invalid token format' });
         return false;
@@ -434,4 +487,23 @@ async function getGoogleSheet() {
     }
     
     return sheet;
+}
+
+/**
+ * ===================================================================
+ * (POST) Logout - clears the session cookie
+ * ===================================================================
+ */
+async function handleLogout(req, res) {
+    try {
+        // Clear cookie by setting Max-Age=0
+        const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+        const sameSite = 'Lax';
+        const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
+        res.setHeader('Set-Cookie', cookie);
+        return res.status(200).json({ success: true, message: 'Logged out' });
+    } catch (error) {
+        console.error('Logout error', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
 }
