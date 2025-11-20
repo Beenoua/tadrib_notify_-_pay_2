@@ -1,5 +1,8 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 
 // Simple auth (same behavior as api/admin.js)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -62,6 +65,44 @@ function authCheck(req, res) {
     } catch (e) { /* ignore */ }
     res.status(401).json({ error: 'Invalid credentials' });
     return false;
+}
+
+// Events DB helpers (optional integration)
+const EVENTS_DB_DIR = path.resolve(process.cwd(), 'data');
+const EVENTS_DB_FILE = path.join(EVENTS_DB_DIR, 'events.sqlite');
+
+function openEventsDbIfExists() {
+    try {
+        if (!fs.existsSync(EVENTS_DB_FILE)) return null;
+        const db = new Database(EVENTS_DB_FILE, { readonly: true });
+        return db;
+    } catch (err) {
+        console.warn('Could not open events DB', err && err.message);
+        return null;
+    }
+}
+
+function computeFunnelSummary(db, start, end) {
+    if (!db) return null;
+    try {
+        const startTs = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
+        const endTs = end ? end + 'T23:59:59' : new Date().toISOString();
+
+        const totalInquiriesRow = db.prepare(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ?`).get(startTs, endTs);
+        const inquiries = totalInquiriesRow ? (totalInquiriesRow.cnt || 0) : 0;
+
+        const convertedRow = db.prepare(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success')`).get(startTs, endTs);
+        const converted = convertedRow ? (convertedRow.cnt || 0) : 0;
+
+        const paymentsRow = db.prepare(`SELECT COUNT(*) AS cnt FROM events WHERE lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ?`).get(startTs, endTs);
+        const payments = paymentsRow ? (paymentsRow.cnt || 0) : 0;
+
+        const conversionRate = inquiries > 0 ? +(converted / inquiries).toFixed(4) : 0;
+        return { inquiries, converted, payments, conversionRate };
+    } catch (err) {
+        console.warn('Funnel compute error', err && err.message);
+        return null;
+    }
 }
 
 export default async function handler(req, res) {
@@ -160,23 +201,84 @@ export default async function handler(req, res) {
                 revenuePerLanguage: revPerLanguage,
                 count: filtered.length
             };
+
+            // Try to augment summary with funnel KPIs from events DB (if present)
+            try {
+                const eventsDb = openEventsDbIfExists();
+                if (eventsDb) {
+                    const funnel = computeFunnelSummary(eventsDb, qp.start, qp.end);
+                    if (funnel) result.summary.funnel = funnel;
+                    try { eventsDb.close(); } catch (e) { /* ignore */ }
+                }
+            } catch (err) {
+                console.warn('Could not compute funnel metrics', err && err.message);
+            }
             cacheSet(cacheKey, result);
             return res.status(200).json(result);
         }
 
-        // timeseries endpoint: /api/metrics/timeseries?metric=daily_revenue
+        // timeseries endpoint: /api/metrics/timeseries?metric=daily_revenue|daily_inquiries|daily_funnel
         if (pathname.endsWith('/timeseries')) {
             const { metric, start, end, granularity } = qp;
-            const list = applyFilters(items).filter(i => i.status === 'paid');
-            // default daily
-            const byDay = {};
-            for (const it of list) {
-                const d = it.parsedDate ? it.parsedDate.toISOString().slice(0,10) : 'unknown';
-                byDay[d] = (byDay[d] || 0) + it.amount;
+
+            // revenue timeseries from sheet rows (paid)
+            if (!metric || metric === 'daily_revenue') {
+                const list = applyFilters(items).filter(i => i.status === 'paid');
+                const byDay = {};
+                for (const it of list) {
+                    const d = it.parsedDate ? it.parsedDate.toISOString().slice(0,10) : 'unknown';
+                    byDay[d] = (byDay[d] || 0) + it.amount;
+                }
+                const labels = Object.keys(byDay).sort();
+                const series = labels.map(l => byDay[l]);
+                return res.status(200).json({ success: true, metric: metric || 'daily_revenue', labels, series });
             }
-            const labels = Object.keys(byDay).sort();
-            const series = labels.map(l => byDay[l]);
-            return res.status(200).json({ success: true, metric: metric || 'daily_revenue', labels, series });
+
+            // event-based timeseries (requires events DB)
+            const eventsDb = openEventsDbIfExists();
+            if (!eventsDb) return res.status(200).json({ success: true, metric, labels: [], series: [] });
+
+            const startTs = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
+            const endTs = end ? end + 'T23:59:59' : new Date().toISOString();
+
+            if (metric === 'daily_inquiries') {
+                // distinct inquiry_id per day
+                const q = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
+                const rows = eventsDb.prepare(q).all(startTs, endTs);
+                const labels = rows.map(r => r.day);
+                const series = rows.map(r => r.cnt);
+                try { eventsDb.close(); } catch (e) {}
+                return res.status(200).json({ success: true, metric, labels, series });
+            }
+
+            if (metric === 'daily_conversions') {
+                // distinct inquiry_id with payment-like events per day
+                const q = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
+                const rows = eventsDb.prepare(q).all(startTs, endTs);
+                const labels = rows.map(r => r.day);
+                const series = rows.map(r => r.cnt);
+                try { eventsDb.close(); } catch (e) {}
+                return res.status(200).json({ success: true, metric, labels, series });
+            }
+
+            if (metric === 'daily_funnel') {
+                // return both inquiries and conversions aligned by date
+                const qInq = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
+                const qConv = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
+                const inqRows = eventsDb.prepare(qInq).all(startTs, endTs);
+                const convRows = eventsDb.prepare(qConv).all(startTs, endTs);
+                // merge dates
+                const mapInq = Object.fromEntries(inqRows.map(r => [r.day, r.cnt]));
+                const mapConv = Object.fromEntries(convRows.map(r => [r.day, r.cnt]));
+                const allDates = Array.from(new Set([...Object.keys(mapInq), ...Object.keys(mapConv)])).sort();
+                const inquiriesSeries = allDates.map(d => mapInq[d] || 0);
+                const conversionsSeries = allDates.map(d => mapConv[d] || 0);
+                try { eventsDb.close(); } catch (e) {}
+                return res.status(200).json({ success: true, metric, labels: allDates, series: { inquiries: inquiriesSeries, conversions: conversionsSeries } });
+            }
+
+            try { eventsDb.close(); } catch (e) {}
+            return res.status(400).json({ error: 'Unknown metric for timeseries' });
         }
 
         return res.status(400).json({ error: 'Unknown metrics route' });
