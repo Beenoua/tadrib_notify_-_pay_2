@@ -1,9 +1,5 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { Pool } from 'pg';
 
 // Simple auth (same behavior as api/admin.js)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -66,68 +62,6 @@ function authCheck(req, res) {
     } catch (e) { /* ignore */ }
     res.status(401).json({ error: 'Invalid credentials' });
     return false;
-}
-
-// Events DB helpers (optional integration)
-const EVENTS_DB_DIR = path.resolve(process.cwd(), 'data');
-const EVENTS_DB_FILE = path.join(EVENTS_DB_DIR, 'events.sqlite');
-
-// Postgres pool for events (preferred durable store)
-const DATABASE_URL = process.env.DATABASE_URL || '';
-let pgPool = null;
-if (DATABASE_URL) {
-    try { pgPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } }); } catch (e) { console.warn('Could not create pg pool', e && e.message); pgPool = null; }
-}
-
-function openEventsDbIfExists() {
-    try {
-        if (!fs.existsSync(EVENTS_DB_FILE)) return null;
-        const db = new Database(EVENTS_DB_FILE, { readonly: true });
-        return db;
-    } catch (err) {
-        console.warn('Could not open events DB', err && err.message);
-        return null;
-    }
-}
-
-function computeFunnelSummary(db, start, end) {
-    // If Postgres pool is available, compute funnel from Postgres
-    if (pgPool) {
-        try {
-            const startTs = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
-            const endTs = end ? end + 'T23:59:59' : new Date().toISOString();
-            const inquiriesRes = pgPool.query(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= $1 AND timestamp <= $2`, [startTs, endTs]);
-            const convertedRes = pgPool.query(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= $1 AND timestamp <= $2 AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success')`, [startTs, endTs]);
-            const paymentsRes = pgPool.query(`SELECT COUNT(*) AS cnt FROM events WHERE lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= $1 AND timestamp <= $2`, [startTs, endTs]);
-            return Promise.all([inquiriesRes, convertedRes, paymentsRes]).then(([inqR, convR, payR]) => {
-                const inquiries = (inqR && inqR.rows && inqR.rows[0]) ? +inqR.rows[0].cnt : 0;
-                const converted = (convR && convR.rows && convR.rows[0]) ? +convR.rows[0].cnt : 0;
-                const payments = (payR && payR.rows && payR.rows[0]) ? +payR.rows[0].cnt : 0;
-                const conversionRate = inquiries > 0 ? +(converted / inquiries).toFixed(4) : 0;
-                return { inquiries, converted, payments, conversionRate };
-            }).catch(err => { console.warn('Funnel compute pg error', err && err.message); return null; });
-        } catch (err) { console.warn('Funnel compute pg error', err && err.message); return null; }
-    }
-    if (!db) return null;
-    try {
-        const startTs = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
-        const endTs = end ? end + 'T23:59:59' : new Date().toISOString();
-
-        const totalInquiriesRow = db.prepare(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ?`).get(startTs, endTs);
-        const inquiries = totalInquiriesRow ? (totalInquiriesRow.cnt || 0) : 0;
-
-        const convertedRow = db.prepare(`SELECT COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success')`).get(startTs, endTs);
-        const converted = convertedRow ? (convertedRow.cnt || 0) : 0;
-
-        const paymentsRow = db.prepare(`SELECT COUNT(*) AS cnt FROM events WHERE lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ?`).get(startTs, endTs);
-        const payments = paymentsRow ? (paymentsRow.cnt || 0) : 0;
-
-        const conversionRate = inquiries > 0 ? +(converted / inquiries).toFixed(4) : 0;
-        return { inquiries, converted, payments, conversionRate };
-    } catch (err) {
-        console.warn('Funnel compute error', err && err.message);
-        return null;
-    }
 }
 
 export default async function handler(req, res) {
@@ -226,136 +160,23 @@ export default async function handler(req, res) {
                 revenuePerLanguage: revPerLanguage,
                 count: filtered.length
             };
-
-            // Try to augment summary with funnel KPIs from events DB (if present)
-            try {
-                const eventsDb = openEventsDbIfExists();
-                    if (pgPool) {
-                        const funnel = await computeFunnelSummary(null, qp.start, qp.end);
-                        if (funnel) result.summary.funnel = funnel;
-                    } else if (eventsDb) {
-                        const funnel = computeFunnelSummary(eventsDb, qp.start, qp.end);
-                        if (funnel) result.summary.funnel = funnel;
-                        try { eventsDb.close(); } catch (e) { /* ignore */ }
-                    }
-            } catch (err) {
-                console.warn('Could not compute funnel metrics', err && err.message);
-            }
             cacheSet(cacheKey, result);
             return res.status(200).json(result);
         }
 
-        // timeseries endpoint: /api/metrics/timeseries?metric=daily_revenue|daily_inquiries|daily_funnel
+        // timeseries endpoint: /api/metrics/timeseries?metric=daily_revenue
         if (pathname.endsWith('/timeseries')) {
             const { metric, start, end, granularity } = qp;
-
-            // revenue timeseries from sheet rows (paid)
-            if (!metric || metric === 'daily_revenue') {
-                const list = applyFilters(items).filter(i => i.status === 'paid');
-                const byDay = {};
-                for (const it of list) {
-                    const d = it.parsedDate ? it.parsedDate.toISOString().slice(0,10) : 'unknown';
-                    byDay[d] = (byDay[d] || 0) + it.amount;
-                }
-                const labels = Object.keys(byDay).sort();
-                const series = labels.map(l => byDay[l]);
-                return res.status(200).json({ success: true, metric: metric || 'daily_revenue', labels, series });
+            const list = applyFilters(items).filter(i => i.status === 'paid');
+            // default daily
+            const byDay = {};
+            for (const it of list) {
+                const d = it.parsedDate ? it.parsedDate.toISOString().slice(0,10) : 'unknown';
+                byDay[d] = (byDay[d] || 0) + it.amount;
             }
-
-            // event-based timeseries (requires events DB)
-            const startTs = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
-            const endTs = end ? end + 'T23:59:59' : new Date().toISOString();
-
-            // If Postgres is available use it
-            if (pgPool) {
-                if (!metric || metric === 'daily_revenue') {
-                    // revenue still computed from Google Sheets above
-                    const list = applyFilters(items).filter(i => i.status === 'paid');
-                    const byDay = {};
-                    for (const it of list) {
-                        const d = it.parsedDate ? it.parsedDate.toISOString().slice(0,10) : 'unknown';
-                        byDay[d] = (byDay[d] || 0) + it.amount;
-                    }
-                    const labels = Object.keys(byDay).sort();
-                    const series = labels.map(l => byDay[l]);
-                    return res.status(200).json({ success: true, metric: metric || 'daily_revenue', labels, series });
-                }
-
-                if (metric === 'daily_inquiries') {
-                    const q = `SELECT to_char(timestamp::date,'YYYY-MM-DD') AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= $1 AND timestamp <= $2 GROUP BY day ORDER BY day ASC`;
-                    const r = await pgPool.query(q, [startTs, endTs]);
-                    const rows = r.rows || [];
-                    const labels = rows.map(r => r.day);
-                    const series = rows.map(r => +r.cnt);
-                    return res.status(200).json({ success: true, metric, labels, series });
-                }
-
-                if (metric === 'daily_conversions') {
-                    const q = `SELECT to_char(timestamp::date,'YYYY-MM-DD') AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= $1 AND timestamp <= $2 GROUP BY day ORDER BY day ASC`;
-                    const r = await pgPool.query(q, [startTs, endTs]);
-                    const rows = r.rows || [];
-                    const labels = rows.map(r => r.day);
-                    const series = rows.map(r => +r.cnt);
-                    return res.status(200).json({ success: true, metric, labels, series });
-                }
-
-                if (metric === 'daily_funnel') {
-                    const qInq = `SELECT to_char(timestamp::date,'YYYY-MM-DD') AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= $1 AND timestamp <= $2 GROUP BY day ORDER BY day ASC`;
-                    const qConv = `SELECT to_char(timestamp::date,'YYYY-MM-DD') AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= $1 AND timestamp <= $2 GROUP BY day ORDER BY day ASC`;
-                    const [inqR, convR] = await Promise.all([pgPool.query(qInq, [startTs, endTs]), pgPool.query(qConv, [startTs, endTs])]);
-                    const inqRows = inqR.rows || [];
-                    const convRows = convR.rows || [];
-                    const mapInq = Object.fromEntries(inqRows.map(r => [r.day, +r.cnt]));
-                    const mapConv = Object.fromEntries(convRows.map(r => [r.day, +r.cnt]));
-                    const allDates = Array.from(new Set([...Object.keys(mapInq), ...Object.keys(mapConv)])).sort();
-                    const inquiriesSeries = allDates.map(d => mapInq[d] || 0);
-                    const conversionsSeries = allDates.map(d => mapConv[d] || 0);
-                    return res.status(200).json({ success: true, metric, labels: allDates, series: { inquiries: inquiriesSeries, conversions: conversionsSeries } });
-                }
-
-                return res.status(400).json({ error: 'Unknown metric for timeseries' });
-            }
-
-            const eventsDb = openEventsDbIfExists();
-            if (!eventsDb) return res.status(200).json({ success: true, metric, labels: [], series: [] });
-
-            const startTsSql = start ? start + 'T00:00:00' : '1970-01-01T00:00:00';
-            const endTsSql = end ? end + 'T23:59:59' : new Date().toISOString();
-
-            if (metric === 'daily_inquiries') {
-                const q = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
-                const rows = eventsDb.prepare(q).all(startTsSql, endTsSql);
-                const labels = rows.map(r => r.day);
-                const series = rows.map(r => r.cnt);
-                try { eventsDb.close(); } catch (e) {}
-                return res.status(200).json({ success: true, metric, labels, series });
-            }
-
-            if (metric === 'daily_conversions') {
-                const q = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
-                const rows = eventsDb.prepare(q).all(startTsSql, endTsSql);
-                const labels = rows.map(r => r.day);
-                const series = rows.map(r => r.cnt);
-                try { eventsDb.close(); } catch (e) {}
-                return res.status(200).json({ success: true, metric, labels, series });
-            }
-
-            if (metric === 'daily_funnel') {
-                const qInq = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
-                const qConv = `SELECT substr(timestamp,1,10) AS day, COUNT(DISTINCT inquiry_id) AS cnt FROM events WHERE inquiry_id IS NOT NULL AND lower(event_type) IN ('payment','payment_success','paid','converted','completed','transaction_success') AND timestamp >= ? AND timestamp <= ? GROUP BY day ORDER BY day ASC`;
-                const inqRows = eventsDb.prepare(qInq).all(startTsSql, endTsSql);
-                const convRows = eventsDb.prepare(qConv).all(startTsSql, endTsSql);
-                const mapInq = Object.fromEntries(inqRows.map(r => [r.day, r.cnt]));
-                const mapConv = Object.fromEntries(convRows.map(r => [r.day, r.cnt]));
-                const allDates = Array.from(new Set([...Object.keys(mapInq), ...Object.keys(mapConv)])).sort();
-                const inquiriesSeries = allDates.map(d => mapInq[d] || 0);
-                const conversionsSeries = allDates.map(d => mapConv[d] || 0);
-                try { eventsDb.close(); } catch (e) {}
-                return res.status(200).json({ success: true, metric, labels: allDates, series: { inquiries: inquiriesSeries, conversions: conversionsSeries } });
-            }
-
-            try { eventsDb.close(); } catch (e) {}
-            return res.status(400).json({ error: 'Unknown metric for timeseries' });
+            const labels = Object.keys(byDay).sort();
+            const series = labels.map(l => byDay[l]);
+            return res.status(200).json({ success: true, metric: metric || 'daily_revenue', labels, series });
         }
 
         return res.status(400).json({ error: 'Unknown metrics route' });
