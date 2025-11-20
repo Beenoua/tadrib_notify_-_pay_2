@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { Pool } from 'pg';
 
 // Try to dynamically import better-sqlite3. If it's not available (failed optional install),
 // fall back to an in-memory event store so the API remains functional (non-persistent).
@@ -13,6 +14,18 @@ try {
     }
 } catch (e) {
     hasSqlite = false;
+}
+
+// Postgres pool (durable storage) if DATABASE_URL is provided
+const DATABASE_URL = process.env.DATABASE_URL || '';
+let pgPool = null;
+if (DATABASE_URL) {
+    try {
+        pgPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    } catch (e) {
+        console.warn('Could not create pg pool', e && e.message);
+        pgPool = null;
+    }
 }
 
 // Simple events ingestion endpoint backed by SQLite
@@ -84,6 +97,20 @@ export default async function handler(req, res) {
             const utm_source = body.utm_source || null;
             const utm_medium = body.utm_medium || null;
             const utm_campaign = body.utm_campaign || null;
+            // Prefer Postgres if configured
+            if (pgPool) {
+                try {
+                    const insertQ = `INSERT INTO events (event_type, inquiry_id, session_id, course, timestamp, metadata, utm_source, utm_medium, utm_campaign, created_at)
+                                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`;
+                    const params = [eventType, inquiryId, sessionId, course, timestamp, metadata ? JSON.parse(metadata) : null, utm_source, utm_medium, utm_campaign, new Date().toISOString()];
+                    const result = await pgPool.query(insertQ, params);
+                    const id = result && result.rows && result.rows[0] ? result.rows[0].id : null;
+                    return sendJSON(res, 201, { success: true, id, persistence: 'postgres' });
+                } catch (e) {
+                    console.error('Postgres insert error', e && e.message);
+                    // fall-through to sqlite/memory fallback
+                }
+            }
 
             if (db) {
                 const stmt = db.prepare(`INSERT INTO events (event_type, inquiry_id, session_id, course, timestamp, metadata, utm_source, utm_medium, utm_campaign, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`);
@@ -121,6 +148,28 @@ export default async function handler(req, res) {
             if (end) { q += ' AND timestamp <= ?'; params.push(end + 'T23:59:59'); }
             q += ' ORDER BY timestamp DESC';
             if (limit) q += ' LIMIT ' + (Number(limit) || 100);
+
+            // If Postgres is available, query it
+            if (pgPool) {
+                try {
+                    const clauses = [];
+                    const p = [];
+                    let idx = 1;
+                    if (eventType) { clauses.push(`event_type = $${idx++}`); p.push(eventType); }
+                    if (inquiryId) { clauses.push(`inquiry_id = $${idx++}`); p.push(inquiryId); }
+                    if (start) { clauses.push(`timestamp >= $${idx++}`); p.push(start + 'T00:00:00'); }
+                    if (end) { clauses.push(`timestamp <= $${idx++}`); p.push(end + 'T23:59:59'); }
+                    const where = clauses.length ? ('WHERE ' + clauses.join(' AND ')) : '';
+                    let sql = `SELECT id, event_type, inquiry_id, session_id, course, timestamp, metadata::text AS metadata, utm_source, utm_medium, utm_campaign, created_at FROM events ${where} ORDER BY timestamp DESC`;
+                    if (limit) sql += ' LIMIT ' + (Number(limit) || 100);
+                    const r = await pgPool.query(sql, p);
+                    const rows = r.rows || [];
+                    return sendJSON(res, 200, { success: true, rows, persistence: 'postgres' });
+                } catch (e) {
+                    console.error('Postgres query error', e && e.message);
+                    // fallthrough to sqlite/memory
+                }
+            }
 
             if (db) {
                 const rows = db.prepare(q).all(...params);
