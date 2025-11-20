@@ -286,28 +286,45 @@ async function handleGet(req, res) {
  */
 async function handlePost(req, res) {
      try {
-        if (!await authenticate(req, res)) return; // Authenticate
-// ... (باقي الكود لم يتغير)
-        const sheet = await getGoogleSheet(); // Connect to sheet
+        if (!await authenticate(req, res)) return;
+
+        const sheet = await getGoogleSheet();
         
-        // (تعديل) إضافة بيانات الطلب إلى Google Sheet
         const newItem = req.body;
         
+        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
         await sheet.addRow({
             'Timestamp': new Date().toISOString(),
-            'Inquiry ID': `MANUAL-${Date.now()}`,
+            'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
             'Phone Number': newItem.customerPhone,
+            
+            // الحقول التي كانت مفقودة
             'Selected Course': newItem.course,
-            'Qualification': newItem.qualification,
-            'Experience': newItem.experience,
+            'Qualification': newItem.qualification || 'Not Specified',
+            'Experience': newItem.experience || 'Not Specified',
+            
             'Payment Status': newItem.status,
             'Payment Method': newItem.paymentMethod,
+            
+            // الربط الصحيح لرقم المعاملة والعملة
+            'Transaction ID': newItem.transactionId || '', 
+            'Currency': 'MAD', // قيمة ثابتة دائماً
             'Amount': newItem.finalAmount,
+            
             'Lang': newItem.language,
-            'utm_source': newItem.utm_source || 'manual'
-            // أضف أي حقول أخرى هنا
+            
+            // كل حقول UTM
+            'utm_source': newItem.utm_source || 'manual_entry',
+            'utm_medium': newItem.utm_medium || '',
+            'utm_campaign': newItem.utm_campaign || '',
+            'utm_term': newItem.utm_term || '',
+            'utm_content': newItem.utm_content || '',
+            
+            // الحقول التقنية الإضافية (اختياري حسب جدولك)
+            'CashPlus Code': newItem.cashplusCode || '',
+            'Last4Digits': newItem.last4 || ''
         });
 
         res.status(201).json({
@@ -319,7 +336,7 @@ async function handlePost(req, res) {
         console.error('Admin POST API Error:', error);
         res.status(500).json({
             error: 'Internal server error',
-            message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+            message: error.message
         });
     }
 }
@@ -332,19 +349,19 @@ async function handlePost(req, res) {
  */
 async function handlePut(req, res) {
      try {
-        if (!await authenticate(req, res)) return; // Authenticate
-// ... (باقي الكود لم يتغير)
-        const sheet = await getGoogleSheet(); // Connect to sheet
+        if (!await authenticate(req, res)) return;
+
+        const sheet = await getGoogleSheet();
         const rows = await sheet.getRows();
         
         const updatedItem = req.body;
-        const id = updatedItem.inquiryId || updatedItem.transactionId;
+        const id = updatedItem.originalInquiryId; // نستخدم المعرف الأصلي للبحث
 
         if (!id) {
             return res.status(400).json({ error: 'ID is required for update' });
         }
 
-        // Find the row with matching id
+        // البحث عن الصف
         const rowIndex = rows.findIndex(row =>
             row.get('Inquiry ID') === id || row.get('Transaction ID') === id
         );
@@ -353,21 +370,29 @@ async function handlePut(req, res) {
             return res.status(404).json({ error: 'Record not found' });
         }
 
-        // Update the row fields
         const rowToUpdate = rows[rowIndex];
-        rowToUpdate.set('Full Name', updatedItem.customerName);
-        rowToUpdate.set('Email', updatedItem.customerEmail);
-        rowToUpdate.set('Phone Number', updatedItem.customerPhone);
-        rowToUpdate.set('Selected Course', updatedItem.course);
-        rowToUpdate.set('Qualification', updatedItem.qualification);
-        rowToUpdate.set('Experience', updatedItem.experience);
-        rowToUpdate.set('Payment Status', updatedItem.status);
-        rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
-        rowToUpdate.set('Amount', updatedItem.finalAmount);
-        rowToUpdate.set('Lang', updatedItem.language);
-        rowToUpdate.set('utm_source', updatedItem.utm_source);
+
+        // تحديث شامل لكل الحقول
+        if(updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
+        if(updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
+        if(updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
+        if(updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
+        if(updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
+        if(updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
+        if(updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
+        if(updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
+        if(updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
+        if(updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
+        if(updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
         
-        await rowToUpdate.save(); // Save changes
+        // تحديث UTMs
+        if(updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
+        if(updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
+        if(updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
+        if(updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
+        if(updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
+
+        await rowToUpdate.save();
 
         res.status(200).json({
             success: true,
@@ -378,7 +403,7 @@ async function handlePut(req, res) {
         console.error('Admin PUT API Error:', error);
         res.status(500).json({
             error: 'Internal server error',
-            message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+            message: error.message
         });
     }
 }
