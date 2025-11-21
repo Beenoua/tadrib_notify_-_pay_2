@@ -1,11 +1,29 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
+import { createClient } from '@supabase/supabase-js';
 // ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
 // import { validateRequired, validateEmail } from './utils.js'; 
 
 // Simple authentication
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
+
+// Supabase Configuration
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+function getSupabaseAdmin() {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+        console.error('Missing Supabase credentials');
+        return null;
+    }
+    return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false
+        }
+    });
+}
 
 // ===================================================================
 // (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
@@ -29,7 +47,7 @@ function checkDateFilter(item, filterValue, customStart, customEnd) {
     if (!filterValue || filterValue === 'all') { return true; }
     const itemDate = item.parsedDate; // (تعديل) نفترض أن item.parsedDate موجود
     if (!itemDate) { return false; }
-    
+
     const now = new Date();
     let startDate;
     switch (filterValue) {
@@ -42,7 +60,7 @@ function checkDateFilter(item, filterValue, customStart, customEnd) {
         case 'year': startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); return itemDate >= startDate;
         case 'custom':
             if (customStart && customEnd) {
-                const start = new Date(customStart + 'T00:00:00'); 
+                const start = new Date(customStart + 'T00:00:00');
                 const end = new Date(customEnd + 'T23:59:59');
                 return itemDate >= start && itemDate <= end;
             }
@@ -123,8 +141,16 @@ export default async function handler(req, res) {
 
     // Handle different HTTP methods and a special /login POST route
     if (req.method === 'GET') {
+        // (NEW) Check for user management actions
+        if (req.query.action === 'users') {
+            return handleUserManagement(req, res);
+        }
         return handleGet(req, res);
     } else if (req.method === 'POST') {
+        // (NEW) Check for user management actions
+        if (req.query.action && ['add-user', 'delete-user', 'change-password'].includes(req.query.action)) {
+            return handleUserManagement(req, res);
+        }
         // Support login/logout both when requests are targeted to /api/admin
         // (Some platforms route /api/admin/login -> 404). Detect login by body fields.
         try {
@@ -164,16 +190,35 @@ async function handleLogin(req, res) {
             return res.status(400).json({ error: 'username and password required' });
         }
 
+        // 1. Try Master Key Auth
         if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            // Set an HttpOnly session cookie. Use Secure in production.
             const maxAge = 24 * 60 * 60; // 1 day
             const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            // For cross-site fetches we need SameSite=None and Secure in production
             const sameSite = 'None';
             const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
             res.setHeader('Set-Cookie', cookie);
-            return res.status(200).json({ success: true, message: 'Logged in' });
+            return res.status(200).json({ success: true, message: 'Logged in (Master)' });
         }
+
+        // 2. Try Supabase Auth
+        const supabase = getSupabaseAdmin();
+        if (supabase) {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: username,
+                password: password
+            });
+
+            if (!error && data.session) {
+                const maxAge = 24 * 60 * 60; // 1 day
+                const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+                const sameSite = 'None';
+                // Store Supabase Access Token
+                const cookie = `admin_token=${data.session.access_token}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
+                res.setHeader('Set-Cookie', cookie);
+                return res.status(200).json({ success: true, message: 'Logged in (Supabase)' });
+            }
+        }
+
         return res.status(401).json({ error: 'Invalid credentials' });
     } catch (error) {
         console.error('Login error', error);
@@ -230,7 +275,7 @@ async function handleGet(req, res) {
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
-        
+
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
@@ -247,14 +292,14 @@ async function handleGet(req, res) {
             filteredData = data.filter(item => {
                 const search = searchTerm ? searchTerm.toLowerCase() : '';
                 const matchesSearch = !search ||
-                    Object.values(item).some(val => 
+                    Object.values(item).some(val =>
                         String(val).toLowerCase().includes(search)
                     );
                 const matchesStatus = !statusFilter || item.status === statusFilter;
                 const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
                 const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
                 const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
-                
+
                 return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
             });
 
@@ -285,13 +330,13 @@ async function handleGet(req, res) {
  * ===================================================================
  */
 async function handlePost(req, res) {
-     try {
+    try {
         if (!await authenticate(req, res)) return;
 
         const sheet = await getGoogleSheet();
-        
+
         const newItem = req.body;
-        
+
         // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
         await sheet.addRow({
             'Timestamp': new Date().toISOString(),
@@ -299,29 +344,29 @@ async function handlePost(req, res) {
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
             'Phone Number': newItem.customerPhone,
-            
+
             // الحقول التي كانت مفقودة
             'Selected Course': newItem.course,
             'Qualification': newItem.qualification || 'Not Specified',
             'Experience': newItem.experience || 'Not Specified',
-            
+
             'Payment Status': newItem.status,
             'Payment Method': newItem.paymentMethod,
-            
+
             // الربط الصحيح لرقم المعاملة والعملة
-            'Transaction ID': newItem.transactionId || '', 
+            'Transaction ID': newItem.transactionId || '',
             'Currency': 'MAD', // قيمة ثابتة دائماً
             'Amount': newItem.finalAmount,
-            
+
             'Lang': newItem.language,
-            
+
             // كل حقول UTM
             'utm_source': newItem.utm_source || 'manual_entry',
             'utm_medium': newItem.utm_medium || '',
             'utm_campaign': newItem.utm_campaign || '',
             'utm_term': newItem.utm_term || '',
             'utm_content': newItem.utm_content || '',
-            
+
             // الحقول التقنية الإضافية (اختياري حسب جدولك)
             'CashPlus Code': newItem.cashplusCode || '',
             'Last4Digits': newItem.last4 || ''
@@ -348,12 +393,12 @@ async function handlePost(req, res) {
  * ===================================================================
  */
 async function handlePut(req, res) {
-     try {
+    try {
         if (!await authenticate(req, res)) return;
 
         const sheet = await getGoogleSheet();
         const rows = await sheet.getRows();
-        
+
         const updatedItem = req.body;
         const id = updatedItem.originalInquiryId; // نستخدم المعرف الأصلي للبحث
 
@@ -373,24 +418,24 @@ async function handlePut(req, res) {
         const rowToUpdate = rows[rowIndex];
 
         // تحديث شامل لكل الحقول
-        if(updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
-        if(updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
-        if(updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
-        if(updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
-        if(updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
-        if(updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
-        if(updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
-        if(updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
-        if(updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
-        if(updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
-        if(updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
-        
+        if (updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
+        if (updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
+        if (updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
+        if (updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
+        if (updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
+        if (updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
+        if (updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
+        if (updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
+        if (updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
+        if (updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
+        if (updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
+
         // تحديث UTMs
-        if(updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
-        if(updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
-        if(updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
-        if(updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
-        if(updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
+        if (updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
+        if (updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
+        if (updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
+        if (updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
+        if (updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
 
         await rowToUpdate.save();
 
@@ -416,7 +461,7 @@ async function handlePut(req, res) {
 async function handleDelete(req, res) {
     try {
         if (!await authenticate(req, res)) return; // Authenticate
-// ... (باقي الكود لم يتغير)
+        // ... (باقي الكود لم يتغير)
         // --- (START) (FIX) إصلاح وظيفة الحذف ---
         // كان هذا مفقوداً، مما تسبب في فشل كل عمليات الحذف
         const { id } = req.body;
@@ -459,10 +504,22 @@ async function handleDelete(req, res) {
  * ===================================================================
  */
 async function authenticate(req, res) {
-// Accept either an HttpOnly cookie session or Basic Authorization header
     const cookieHeader = req.headers.cookie || '';
+
+    // 1. Check Master Key Cookie
     if (cookieHeader.includes('admin_session=1')) {
         return true;
+    }
+
+    // 2. Check Supabase Token Cookie
+    const tokenMatch = cookieHeader.match(/admin_token=([^;]+)/);
+    if (tokenMatch && tokenMatch[1]) {
+        const token = tokenMatch[1];
+        const supabase = getSupabaseAdmin();
+        if (supabase) {
+            const { data: { user }, error } = await supabase.auth.getUser(token);
+            if (!error && user) return true;
+        }
     }
 
     const authHeader = req.headers.authorization;
@@ -493,7 +550,7 @@ async function authenticate(req, res) {
 }
 
 async function getGoogleSheet() {
-// ... (باقي الكود لم يتغير)
+    // ... (باقي الكود لم يتغير)
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     // (FIX) إصلاح قراءة المفتاح الخاص
@@ -519,7 +576,7 @@ async function getGoogleSheet() {
     if (!sheet) {
         throw new Error('No sheets found in the spreadsheet');
     }
-    
+
     return sheet;
 }
 
@@ -566,4 +623,76 @@ function normalizeCourseName(raw) {
         }
     }
     return 'دورات أخرى';
+}
+
+/**
+ * ===================================================================
+ * (NEW) User Management Handler
+ * ===================================================================
+ */
+async function handleUserManagement(req, res) {
+    if (!await authenticate(req, res)) return;
+
+    const supabase = getSupabaseAdmin();
+    if (!supabase) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    const action = req.query.action;
+
+    try {
+        if (req.method === 'GET' && action === 'users') {
+            const { data: { users }, error } = await supabase.auth.admin.listUsers();
+            if (error) throw error;
+            // Return only necessary info
+            const safeUsers = users.map(u => ({
+                id: u.id,
+                email: u.email,
+                created_at: u.created_at,
+                last_sign_in_at: u.last_sign_in_at
+            }));
+            return res.status(200).json({ success: true, users: safeUsers });
+        }
+
+        if (req.method === 'POST') {
+            if (action === 'add-user') {
+                const { email, password } = req.body;
+                if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+                const { data, error } = await supabase.auth.admin.createUser({
+                    email,
+                    password,
+                    email_confirm: true
+                });
+                if (error) throw error;
+                return res.status(201).json({ success: true, user: data.user });
+            }
+
+            if (action === 'delete-user') {
+                const { userId } = req.body;
+                if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+                const { error } = await supabase.auth.admin.deleteUser(userId);
+                if (error) throw error;
+                return res.status(200).json({ success: true, message: 'User deleted' });
+            }
+
+            if (action === 'change-password') {
+                const { userId, newPassword } = req.body;
+                // If userId is not provided, we might want to allow changing own password, 
+                // but for now let's require userId (admin mode)
+                if (!userId || !newPassword) return res.status(400).json({ error: 'User ID and new password required' });
+
+                const { error } = await supabase.auth.admin.updateUserById(userId, { password: newPassword });
+                if (error) throw error;
+                return res.status(200).json({ success: true, message: 'Password updated' });
+            }
+        }
+
+        return res.status(400).json({ error: 'Invalid action' });
+
+    } catch (error) {
+        console.error('User Management Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
 }
