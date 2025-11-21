@@ -1,10 +1,12 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-// ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
-// import { validateRequired, validateEmail } from './utils.js'; 
-import { createClient } from '@supabase/supabase-js'; // <--- أضف هذا السطر
+import { createClient } from '@supabase/supabase-js'; // (NEW) إضافة مكتبة Supabase
 
-// --- أضف هذا الكود الجديد لتهيئة Supabase ---
+// ===================================================================
+// 1. الإعدادات والتهيئة (Supabase & Constants)
+// ===================================================================
+
+// (NEW) إعداد عميل Supabase
 const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -16,12 +18,12 @@ const supabaseAdmin = createClient(
     }
 );
 
-// Simple authentication
+// بيانات الدخول القديمة (للطوارئ - Backdoor)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
 // ===================================================================
-// (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
+// 2. دوال مساعدة أصلية (لم يتم تغييرها)
 // ===================================================================
 
 function parseDate(ts) {
@@ -40,7 +42,7 @@ function parseDate(ts) {
 
 function checkDateFilter(item, filterValue, customStart, customEnd) {
     if (!filterValue || filterValue === 'all') { return true; }
-    const itemDate = item.parsedDate; // (تعديل) نفترض أن item.parsedDate موجود
+    const itemDate = item.parsedDate;
     if (!itemDate) { return false; }
     
     const now = new Date();
@@ -113,55 +115,320 @@ function calculateStatistics(dataArray) {
     return stats;
 }
 
-
-/**
- * ===================================================================
- * Main Handler (Routes requests)
- * ===================================================================
- */
+// ===================================================================
+// 3. الموجه الرئيسي (Main Handler)
+// ===================================================================
 export default async function handler(req, res) {
-    // CORS: allow the requesting origin and support credentials (cookies)
     const origin = req.headers.origin || '*';
-    // When using credentials, Access-Control-Allow-Origin must be explicit (cannot be '*')
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-   // (تعديل) التحقق من الهوية باستخدام الدالة الجديدة
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    // (UPDATE) التحقق باستخدام النظام الهجين
     const authResult = await authenticate(req);
     if (!authResult.isAuthenticated) {
         return res.status(401).json({ error: 'Unauthorized access' });
     }
-    const currentUser = authResult.user; // هذا المتغير سنمرره للدوال
+    const currentUser = authResult.user; // المستخدم الحالي
 
     try {
-        // (NEW) توجيه طلبات إدارة الموظفين (للمدير فقط)
+        const url = req.url || '';
+
+        // --- (NEW) مسارات إدارة الموظفين (Admin Only) ---
         if (currentUser.role === 'admin') {
-            if (req.method === 'POST' && req.url.includes('/add-user')) return await handleAddUser(req, res);
-            if (req.method === 'GET' && req.url.includes('/users')) return await handleListUsers(req, res);
-            if (req.method === 'DELETE' && req.url.includes('/delete-user')) return await handleDeleteUser(req, res);
+            if (req.method === 'POST' && url.includes('/add-user')) {
+                return await handleAddUser(req, res);
+            }
+            if (req.method === 'GET' && url.includes('/users')) {
+                return await handleListUsers(req, res);
+            }
+            if (req.method === 'DELETE' && url.includes('/delete-user')) {
+                return await handleDeleteUser(req, res);
+            }
         }
 
-        // (تعديل) تمرير currentUser لدوال Google Sheets
+        // --- مسارات البيانات (Google Sheets) ---
         if (req.method === 'GET') {
-            return handleGet(req, res, currentUser); // مرر currentUser
+            return handleGet(req, res, currentUser);
         } else if (req.method === 'POST') {
-            // تعامل مع تسجيل الدخول القديم إذا كان موجوداً هنا، أو تجاوزه
-            if (req.url.includes('/login')) return handleLogin(req, res); 
-            return handlePost(req, res, currentUser); // مرر currentUser
+            // التعامل مع طلبات تسجيل الدخول القديمة إن وجدت
+            if (req.body && req.body.username && req.body.password) return handleLogin(req, res);
+            if (url.includes('/login')) return handleLogin(req, res);
+            if (url.includes('/logout')) return handleLogout(req, res);
+
+            return handlePost(req, res, currentUser);
         } else if (req.method === 'PUT') {
-            return handlePut(req, res, currentUser); // مرر currentUser
+            return handlePut(req, res, currentUser);
         } else if (req.method === 'DELETE') {
-            // (NEW) حماية الحذف
-            if (currentUser.role !== 'admin') return res.status(403).json({ error: 'For Admin Only' });
+            // (UPDATE) الحذف مسموح للمدير فقط
+            if (currentUser.role !== 'admin') {
+                return res.status(403).json({ error: 'حذف البيانات مسموح للمدير فقط' });
+            }
             return handleDelete(req, res);
         } else {
             return res.status(405).json({ error: 'Method not allowed' });
         }
 
+    } catch (error) {
+        console.error('Handler Error:', error);
+        res.status(500).json({ error: 'Internal server error', details: error.message });
+    }
+}
+
 // ===================================================================
-// (NEW) دوال إدارة الموظفين عبر Supabase
+// 4. دوال المصادقة (Updated Authentication)
+// ===================================================================
+
+async function handleLogin(req, res) {
+    // دالة تسجيل الدخول القديمة (Session Cookie) - تم الاحتفاظ بها
+    try {
+        const { username, password } = req.body || {};
+        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+            const maxAge = 24 * 60 * 60;
+            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+            const sameSite = 'None';
+            const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
+            res.setHeader('Set-Cookie', cookie);
+            return res.status(200).json({ success: true, message: 'Logged in' });
+        }
+        return res.status(401).json({ error: 'Invalid credentials' });
+    } catch (error) {
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+async function authenticate(req) {
+    const authHeader = req.headers.authorization;
+    
+    // 1. التحقق عبر الكوكيز (للجلسات القديمة)
+    const cookieHeader = req.headers.cookie || '';
+    if (cookieHeader.includes('admin_session=1')) {
+        return { isAuthenticated: true, user: { role: 'admin', email: 'master_cookie', type: 'master' } };
+    }
+
+    if (!authHeader) return { isAuthenticated: false };
+
+    const [scheme, token] = authHeader.split(' ');
+
+    // 2. التحقق عبر Basic Auth (المفتاح الماستر)
+    if (scheme === 'Basic') {
+        let decoded;
+        try {
+             decoded = (typeof atob === 'function') ? atob(token) : Buffer.from(token, 'base64').toString('utf8');
+        } catch (e) { return { isAuthenticated: false }; }
+        
+        const [u, p] = decoded.split(':');
+        if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) {
+            return { isAuthenticated: true, user: { role: 'admin', email: 'master_admin', type: 'master' } };
+        }
+    }
+
+    // 3. (NEW) التحقق عبر Supabase Token
+    if (scheme === 'Bearer') {
+        const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+        if (error || !user) return { isAuthenticated: false };
+
+        const role = user.user_metadata?.role || 'staff';
+        return { 
+            isAuthenticated: true, 
+            user: { role, email: user.email, id: user.id, type: 'supabase' } 
+        };
+    }
+
+    return { isAuthenticated: false };
+}
+
+async function handleLogout(req, res) {
+    try {
+        const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+        const sameSite = 'None';
+        const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
+        res.setHeader('Set-Cookie', cookie);
+        return res.status(200).json({ success: true, message: 'Logged out' });
+    } catch (error) {
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// ===================================================================
+// 5. العمليات على البيانات (CRUD with Google Sheets)
+// ===================================================================
+
+async function getGoogleSheet() {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    await doc.loadInfo();
+    let sheet = doc.sheetsByTitle["Leads"];
+    if (!sheet) sheet = doc.sheetsByIndex[0];
+    return sheet;
+}
+
+async function handleGet(req, res, user) {
+    // (نفس منطق الجلب والفلترة الأصلي، مع إضافة معلومات المستخدم للرد)
+    const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
+
+    const sheet = await getGoogleSheet();
+    const rows = await sheet.getRows();
+
+    const data = rows.map(row => ({
+        timestamp: row.get('Timestamp') || '',
+        inquiryId: row.get('Inquiry ID') || '',
+        customerName: row.get('Full Name') || '',
+        customerEmail: row.get('Email') || '',
+        customerPhone: row.get('Phone Number') || '',
+        course: row.get('Selected Course') || '',
+        qualification: row.get('Qualification') || '',
+        experience: row.get('Experience') || '',
+        status: row.get('Payment Status') || 'pending',
+        transactionId: row.get('Transaction ID') || '',
+        paymentMethod: row.get('Payment Method') || '',
+        cashplusCode: row.get('CashPlus Code') || '',
+        last4: row.get('Last4Digits') || '',
+        finalAmount: row.get('Amount') || 0,
+        currency: row.get('Currency') || 'MAD',
+        language: row.get('Lang') || 'ar',
+        utm_source: row.get('utm_source') || '',
+        utm_medium: row.get('utm_medium') || '',
+        utm_campaign: row.get('utm_campaign') || '',
+        utm_term: row.get('utm_term') || '',
+        utm_content: row.get('utm_content') || '',
+        parsedDate: parseDate(row.get('Timestamp') || ''),
+        normalizedCourse: normalizeCourseName(row.get('Selected Course') || ''),
+        // (NEW) قراءة حقل آخر تعديل
+        lastUpdatedBy: row.get('Last Updated By') || ''
+    }));
+    
+    const overallStats = calculateStatistics(data);
+    const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
+
+    let filteredData = data;
+    let filteredStats = overallStats;
+
+    if (isFiltered) {
+        filteredData = data.filter(item => {
+            const search = searchTerm ? searchTerm.toLowerCase() : '';
+            const matchesSearch = !search || Object.values(item).some(val => String(val).toLowerCase().includes(search));
+            const matchesStatus = !statusFilter || item.status === statusFilter;
+            const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
+            const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
+            const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
+            return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
+        });
+        filteredStats = calculateStatistics(filteredData);
+    }
+
+    res.status(200).json({
+        success: true,
+        statistics: { overall: overallStats, filtered: filteredStats },
+        data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
+        isFiltered: isFiltered,
+        currentUser: { role: user.role, email: user.email } // إرسال معلومات المستخدم للواجهة
+    });
+}
+
+async function handlePost(req, res, user) {
+    const sheet = await getGoogleSheet();
+    const newItem = req.body;
+    
+    await sheet.addRow({
+        'Timestamp': new Date().toISOString(),
+        'Inquiry ID': newItem.inquiryId,
+        'Full Name': newItem.customerName,
+        'Email': newItem.customerEmail,
+        'Phone Number': newItem.customerPhone,
+        'Selected Course': newItem.course,
+        'Qualification': newItem.qualification || 'Not Specified',
+        'Experience': newItem.experience || 'Not Specified',
+        'Payment Status': newItem.status,
+        'Payment Method': newItem.paymentMethod,
+        'Transaction ID': newItem.transactionId || '', 
+        'Currency': 'MAD',
+        'Amount': newItem.finalAmount,
+        'Lang': newItem.language,
+        'utm_source': newItem.utm_source || 'manual_entry',
+        'utm_medium': newItem.utm_medium || '',
+        'utm_campaign': newItem.utm_campaign || '',
+        'utm_term': newItem.utm_term || '',
+        'utm_content': newItem.utm_content || '',
+        'CashPlus Code': newItem.cashplusCode || '',
+        'Last4Digits': newItem.last4 || '',
+        // (NEW) تسجيل من قام بالإضافة
+        'Last Updated By': user ? user.email : 'System'
+    });
+
+    res.status(201).json({ success: true, message: 'Record created successfully' });
+}
+
+async function handlePut(req, res, user) {
+    const sheet = await getGoogleSheet();
+    const rows = await sheet.getRows();
+    const updatedItem = req.body;
+    const id = updatedItem.originalInquiryId;
+
+    if (!id) return res.status(400).json({ error: 'ID is required for update' });
+
+    const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
+    if (rowIndex === -1) return res.status(404).json({ error: 'Record not found' });
+
+    const rowToUpdate = rows[rowIndex];
+
+    if(updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
+    if(updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
+    if(updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
+    if(updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
+    if(updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
+    if(updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
+    if(updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
+    if(updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
+    if(updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
+    if(updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
+    if(updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
+    if(updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
+    if(updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
+    if(updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
+    if(updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
+    if(updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
+
+    // (NEW) تسجيل من قام بالتعديل
+    rowToUpdate.set('Last Updated By', user ? user.email : 'System');
+
+    await rowToUpdate.save();
+    res.status(200).json({ success: true, message: 'Record updated successfully' });
+}
+
+async function handleDelete(req, res) {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'ID is required' });
+
+    const sheet = await getGoogleSheet();
+    const rows = await sheet.getRows();
+
+    const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
+    if (rowIndex === -1) return res.status(404).json({ error: 'Record not found' });
+
+    await rows[rowIndex].delete();
+    res.status(200).json({ success: true, message: 'Record deleted successfully' });
+}
+
+// ===================================================================
+// 6. دوال إدارة الموظفين (New Functions)
 // ===================================================================
 
 async function handleAddUser(req, res) {
@@ -204,411 +471,10 @@ async function handleDeleteUser(req, res) {
     return res.status(200).json({ success: true });
 }
 
-/**
- * ===================================================================
- * (POST) Login - sets an HttpOnly cookie for session-based auth
- * ===================================================================
- */
-async function handleLogin(req, res) {
-    try {
-        const { username, password } = req.body || {};
-        if (!username || !password) {
-            return res.status(400).json({ error: 'username and password required' });
-        }
+// ===================================================================
+// 7. دوال تطبيع الأسماء (Normalizing - Original)
+// ===================================================================
 
-        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            // Set an HttpOnly session cookie. Use Secure in production.
-            const maxAge = 24 * 60 * 60; // 1 day
-            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            // For cross-site fetches we need SameSite=None and Secure in production
-            const sameSite = 'None';
-            const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
-            res.setHeader('Set-Cookie', cookie);
-            return res.status(200).json({ success: true, message: 'Logged in' });
-        }
-        return res.status(401).json({ error: 'Invalid credentials' });
-    } catch (error) {
-        console.error('Login error', error);
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
-/**
- * ===================================================================
- * (GET) Fetches records and statistics (MODIFIED)
- * ===================================================================
- */
-async function handleGet(req, res) {
-    try {
-        if (!await authenticate(req, res)) return; // Authenticate
-
-        // (NEW) قراءة الفلاتر من الرابط
-        const {
-            searchTerm,
-            statusFilter,
-            paymentFilter,
-            courseFilter,
-            dateFilter,
-            startDate,
-            endDate
-        } = req.query;
-
-        const sheet = await getGoogleSheet(); // Connect to sheet
-        const rows = await sheet.getRows();
-
-        const data = rows.map(row => ({
-            timestamp: row.get('Timestamp') || '',
-            inquiryId: row.get('Inquiry ID') || '',
-            customerName: row.get('Full Name') || '',
-            customerEmail: row.get('Email') || '',
-            customerPhone: row.get('Phone Number') || '',
-            course: row.get('Selected Course') || '',
-            qualification: row.get('Qualification') || '',
-            experience: row.get('Experience') || '',
-            status: row.get('Payment Status') || 'pending',
-            transactionId: row.get('Transaction ID') || '',
-            paymentMethod: row.get('Payment Method') || '',
-            cashplusCode: row.get('CashPlus Code') || '',
-            last4: row.get('Last4Digits') || '',
-            finalAmount: row.get('Amount') || 0,
-            currency: row.get('Currency') || 'MAD',
-            language: row.get('Lang') || 'ar',
-            utm_source: row.get('utm_source') || '',
-            utm_medium: row.get('utm_medium') || '',
-            utm_campaign: row.get('utm_campaign') || '',
-            utm_term: row.get('utm_term') || '',
-            utm_content: row.get('utm_content') || '',
-            // (NEW) إضافة تاريخ مهيأ للفلترة
-            parsedDate: parseDate(row.get('Timestamp') || ''),
-            normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
-        }));
-        
-        // --- (NEW) منطق الفلترة والحساب المركزي ---
-
-        // 1. حساب الإحصائيات الإجمالية (دائماً)
-        const overallStats = calculateStatistics(data);
-
-        // 2. التحقق إذا كانت هناك فلاتر نشطة
-        const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
-
-        let filteredData = data;
-        let filteredStats = overallStats;
-
-        if (isFiltered) {
-            // 3. تطبيق الفلاتر
-            filteredData = data.filter(item => {
-                const search = searchTerm ? searchTerm.toLowerCase() : '';
-                const matchesSearch = !search ||
-                    Object.values(item).some(val => 
-                        String(val).toLowerCase().includes(search)
-                    );
-                const matchesStatus = !statusFilter || item.status === statusFilter;
-                const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
-                const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
-                const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
-                
-                return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
-            });
-
-            // 4. حساب الإحصائيات المفلترة
-            filteredStats = calculateStatistics(filteredData);
-        }
-
-        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات
-        res.status(200).json({
-            success: true,
-            statistics: {
-                overall: overallStats,
-                filtered: filteredStats
-            },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
-            isFiltered: isFiltered
-        });
-
-    } catch (error) {
-        console.error('Admin GET API Error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
-/**
- * ===================================================================
- * (POST) Creates a new record (لم يتغير)
- * ===================================================================
- */
-async function handlePost(req, res) {
-     try {
-        if (!await authenticate(req, res)) return;
-
-        const sheet = await getGoogleSheet();
-        
-        const newItem = req.body;
-        
-        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
-        await sheet.addRow({
-            'Timestamp': new Date().toISOString(),
-            'Inquiry ID': newItem.inquiryId,
-            'Full Name': newItem.customerName,
-            'Email': newItem.customerEmail,
-            'Phone Number': newItem.customerPhone,
-            
-            // الحقول التي كانت مفقودة
-            'Selected Course': newItem.course,
-            'Qualification': newItem.qualification || 'Not Specified',
-            'Experience': newItem.experience || 'Not Specified',
-            
-            'Payment Status': newItem.status,
-            'Payment Method': newItem.paymentMethod,
-            
-            // الربط الصحيح لرقم المعاملة والعملة
-            'Transaction ID': newItem.transactionId || '', 
-            'Currency': 'MAD', // قيمة ثابتة دائماً
-            'Amount': newItem.finalAmount,
-            
-            'Lang': newItem.language,
-            
-            // كل حقول UTM
-            'utm_source': newItem.utm_source || 'manual_entry',
-            'utm_medium': newItem.utm_medium || '',
-            'utm_campaign': newItem.utm_campaign || '',
-            'utm_term': newItem.utm_term || '',
-            'utm_content': newItem.utm_content || '',
-            
-            // الحقول التقنية الإضافية (اختياري حسب جدولك)
-            'CashPlus Code': newItem.cashplusCode || '',
-            'Last4Digits': newItem.last4 || ''
-        });
-
-        res.status(201).json({
-            success: true,
-            message: 'Record created successfully'
-        });
-
-    } catch (error) {
-        console.error('Admin POST API Error:', error);
-        res.status(500).json({
-            error: 'Internal server error',
-            message: error.message,
-        });
-         // (NEW) أضف هذا الحقل الجديد في النهاية
-        'Last Updated By': user ? user.email : 'Unknown'
-    });
-    }
-}
-
-
-/**
- * ===================================================================
- * (PUT) Updates an existing record (لم يتغير)
- * ===================================================================
- */
-async function handlePut(req, res) {
-     try {
-        if (!await authenticate(req, res)) return;
-
-        const sheet = await getGoogleSheet();
-        const rows = await sheet.getRows();
-        
-        const updatedItem = req.body;
-        const id = updatedItem.originalInquiryId; // نستخدم المعرف الأصلي للبحث
-
-        if (!id) {
-            return res.status(400).json({ error: 'ID is required for update' });
-        }
-
-        // البحث عن الصف
-        const rowIndex = rows.findIndex(row =>
-            row.get('Inquiry ID') === id || row.get('Transaction ID') === id
-        );
-
-        if (rowIndex === -1) {
-            return res.status(404).json({ error: 'Record not found' });
-        }
-
-        const rowToUpdate = rows[rowIndex];
-
-        // تحديث شامل لكل الحقول
-        if(updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
-        if(updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
-        if(updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
-        if(updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
-        if(updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
-        if(updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
-        if(updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
-        if(updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
-        if(updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
-        if(updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
-        if(updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
-        
-        // تحديث UTMs
-        if(updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
-        if(updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
-        if(updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
-        if(updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
-        if(updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
-
-         // (NEW) أضف هذا السطر قبل row.save()
-    row.set('Last Updated By', user ? user.email : 'Unknown');
-
-        await rowToUpdate.save();
-
-        res.status(200).json({
-            success: true,
-            message: 'Record updated successfully'
-        });
-
-    } catch (error) {
-        console.error('Admin PUT API Error:', error);
-        res.status(500).json({
-            error: 'Internal server error',
-            message: error.message
-        });
-    }
-}
-
-/**
- * ===================================================================
- * (DELETE) Deletes an existing record (لم يتغير)
- * ===================================================================
- */
-async function handleDelete(req, res) {
-    try {
-        if (!await authenticate(req, res)) return; // Authenticate
-// ... (باقي الكود لم يتغير)
-        // --- (START) (FIX) إصلاح وظيفة الحذف ---
-        // كان هذا مفقوداً، مما تسبب في فشل كل عمليات الحذف
-        const { id } = req.body;
-
-        if (!id) {
-            return res.status(400).json({ error: 'ID is required' });
-        }
-        // --- (END) (FIX) ---
-
-        const sheet = await getGoogleSheet(); // Connect to sheet
-        const rows = await sheet.getRows();
-
-        // Find the row with matching id (inquiryId or transactionId)
-        const rowIndex = rows.findIndex(row =>
-            row.get('Inquiry ID') === id || row.get('Transaction ID') === id
-        );
-
-        if (rowIndex === -1) {
-            return res.status(404).json({ error: 'Record not found' });
-        }
-
-        // Delete the row
-        await rows[rowIndex].delete();
-
-        res.status(200).json({
-            success: true,
-            message: 'Record deleted successfully'
-        });
-
-    } catch (error) {
-        console.error('Admin DELETE API Error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
-
-/**
- * ===================================================================
- * Helper Functions (Authentication & Google Sheet) (لم يتغير)
- * ===================================================================
- */
-async function authenticate(req) { // لاحظ: قمنا بإزالة res من المعاملات لأننا نرجع كائن
-    const authHeader = req.headers.authorization;
-    
-    // 1. التحقق عبر الكوكيز (للجلسات القديمة)
-    const cookieHeader = req.headers.cookie || '';
-    if (cookieHeader.includes('admin_session=1')) {
-        return { isAuthenticated: true, user: { role: 'admin', email: 'master_cookie', type: 'master' } };
-    }
-
-    if (!authHeader) return { isAuthenticated: false };
-
-    const [scheme, token] = authHeader.split(' ');
-
-    // 2. التحقق عبر Basic Auth (المفتاح الماستر)
-    if (scheme === 'Basic') {
-        let decoded;
-        try {
-             decoded = (typeof atob === 'function') ? atob(token) : Buffer.from(token, 'base64').toString('utf8');
-        } catch (e) { return { isAuthenticated: false }; }
-        
-        const [u, p] = decoded.split(':');
-        // تأكد أن المتغيرات ADMIN_USERNAME و ADMIN_PASSWORD معرفة في ملفك
-        if (u === process.env.ADMIN_USERNAME && p === process.env.ADMIN_PASSWORD) {
-            return { isAuthenticated: true, user: { role: 'admin', email: 'master_admin', type: 'master' } };
-        }
-    }
-
-    // 3. (NEW) التحقق عبر Supabase Token
-    if (scheme === 'Bearer') {
-        const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-        if (error || !user) return { isAuthenticated: false };
-
-        const role = user.user_metadata?.role || 'staff';
-        return { 
-            isAuthenticated: true, 
-            user: { role, email: user.email, id: user.id, type: 'supabase' } 
-        };
-    }
-
-    return { isAuthenticated: false };
-}
-
-async function getGoogleSheet() {
-// ... (باقي الكود لم يتغير)
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // (FIX) إصلاح قراءة المفتاح الخاص
-    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-        throw new Error('Missing Google Sheets credentials in environment variables');
-    }
-
-    const serviceAccountAuth = new JWT({
-        email: serviceAccountEmail,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    await doc.loadInfo();
-
-    let sheet = doc.sheetsByTitle["Leads"];
-    if (!sheet) {
-        sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
-    }
-    if (!sheet) {
-        throw new Error('No sheets found in the spreadsheet');
-    }
-    
-    return sheet;
-}
-
-/**
- * ===================================================================
- * (POST) Logout - clears the session cookie
- * ===================================================================
- */
-async function handleLogout(req, res) {
-    try {
-        // Clear cookie by setting Max-Age=0
-        const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-        const sameSite = 'None';
-        const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
-        res.setHeader('Set-Cookie', cookie);
-        return res.status(200).json({ success: true, message: 'Logged out' });
-    } catch (error) {
-        console.error('Logout error', error);
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
-// Normalize course names to shortcodes (same mapping as frontend)
 const COURSE_DEFINITIONS = {
     'PMP': ['Gestion de Projet Professionnelle (PMP®)', 'Professional Project Management (PMP®)', 'الإدارة الاحترافية للمشاريع (PMP®)'],
     'Planning': ['Préparation et Planification de Chantier', 'Site Preparation and Planning', 'إعداد وتخطيط المواقع'],
@@ -625,7 +491,6 @@ function normalizeCourseName(raw) {
     if (lower.includes('planning')) return 'Planning';
     if (lower.includes('qse')) return 'QSE';
     if (lower.includes('softskills') || lower.includes('soft skills')) return 'Soft Skills';
-    // match translations
     for (const shortcode in COURSE_DEFINITIONS) {
         for (const t of COURSE_DEFINITIONS[shortcode]) {
             if (t && typeof t === 'string' && t.trim().toLowerCase() === trimmed.toLowerCase()) return shortcode;
@@ -633,4 +498,3 @@ function normalizeCourseName(raw) {
     }
     return 'دورات أخرى';
 }
-
