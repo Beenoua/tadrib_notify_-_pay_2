@@ -1,217 +1,110 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { createClient } from '@supabase/supabase-js'; // (NEW) إضافة مكتبة Supabase
+import { createClient } from '@supabase/supabase-js';
 
 // ===================================================================
-// 1. الإعدادات والتهيئة (Supabase & Constants)
+// 1. الإعدادات والتهيئة الآمنة (Safe Initialization)
 // ===================================================================
-
-// (NEW) إعداد عميل Supabase
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-        auth: {
-            autoRefreshToken: false,
-            persistSession: false
-        }
-    }
-);
 
 // بيانات الدخول القديمة (للطوارئ - Backdoor)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
-// ===================================================================
-// 2. دوال مساعدة أصلية (لم يتم تغييرها)
-// ===================================================================
-
-function parseDate(ts) {
-    if (!ts) return null;
-    let date;
-    const isoTest = new Date(ts);
-    if (!isNaN(isoTest.getTime())) {
-        date = isoTest;
-    } else {
-        let cleaned = ts.replace(" h ", ":").replace(" min ", ":").replace(" s", "");
-        date = new Date(cleaned);
-    }
-    if (!isNaN(date.getTime())) { return date; }
-    return null;
-}
-
-function checkDateFilter(item, filterValue, customStart, customEnd) {
-    if (!filterValue || filterValue === 'all') { return true; }
-    const itemDate = item.parsedDate;
-    if (!itemDate) { return false; }
-    
-    const now = new Date();
-    let startDate;
-    switch (filterValue) {
-        case 'hour': startDate = new Date(now.getTime() - (60 * 60 * 1000)); return itemDate >= startDate;
-        case 'day': startDate = new Date(now.getTime() - (24 * 60 * 60 * 1000)); return itemDate >= startDate;
-        case 'week': startDate = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)); return itemDate >= startDate;
-        case 'month': startDate = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)); return itemDate >= startDate;
-        case '3month': startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()); return itemDate >= startDate;
-        case '6month': startDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()); return itemDate >= startDate;
-        case 'year': startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); return itemDate >= startDate;
-        case 'custom':
-            if (customStart && customEnd) {
-                const start = new Date(customStart + 'T00:00:00'); 
-                const end = new Date(customEnd + 'T23:59:59');
-                return itemDate >= start && itemDate <= end;
+// تهيئة Supabase بشكل آمن (لن يكسر الموقع إذا كانت المفاتيح مفقودة)
+let supabaseAdmin = null;
+if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+        supabaseAdmin = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL,
+            process.env.SUPABASE_SERVICE_ROLE_KEY,
+            {
+                auth: {
+                    autoRefreshToken: false,
+                    persistSession: false
+                }
             }
-            return true;
-        default: return true;
+        );
+        console.log("✅ Supabase initialized successfully");
+    } catch (e) {
+        console.error("⚠️ Failed to initialize Supabase:", e.message);
     }
-}
-
-function calculateStatistics(dataArray) {
-    const stats = {
-        totalPayments: dataArray.length, paidPayments: 0, pendingPayments: 0, failedPayments: 0, canceledPayments: 0,
-        cashplusPayments: 0, cardPayments: 0, arabicUsers: 0, frenchUsers: 0, englishUsers: 0,
-        netRevenue: 0, pendingRevenue: 0, failedRevenue: 0, canceledRevenue: 0,
-        paid_cashplus: 0, paid_card: 0, pending_cashplus: 0, pending_card: 0,
-        failed_cashplus: 0, failed_card: 0, canceled_cashplus: 0, canceled_card: 0,
-        net_cashplus_revenue: 0, net_card_revenue: 0,
-    };
-    if (!dataArray || dataArray.length === 0) return stats;
-
-    for (const item of dataArray) {
-        const amount = parseFloat(item.finalAmount) || 0;
-        const isCashplus = item.paymentMethod === 'cashplus';
-        const isCard = item.paymentMethod === 'card';
-
-        if (item.language === 'ar') stats.arabicUsers++;
-        if (item.language === 'fr') stats.frenchUsers++;
-        if (item.language === 'en') stats.englishUsers++;
-        if (isCashplus) stats.cashplusPayments++;
-        if (isCard) stats.cardPayments++;
-
-        switch (item.status) {
-            case 'paid':
-                stats.paidPayments++; stats.netRevenue += amount;
-                if (isCashplus) { stats.paid_cashplus++; stats.net_cashplus_revenue += amount; }
-                if (isCard) { stats.paid_card++; stats.net_card_revenue += amount; }
-                break;
-            case 'pending':
-                stats.pendingPayments++; stats.pendingRevenue += amount;
-                if (isCashplus) stats.pending_cashplus++;
-                if (isCard) stats.pending_card++;
-                break;
-            case 'failed':
-                stats.failedPayments++; stats.failedRevenue += amount;
-                if (isCashplus) stats.failed_cashplus++;
-                if (isCard) stats.failed_card++;
-                break;
-            case 'canceled':
-            case 'cancelled':
-                stats.canceledPayments++; stats.canceledRevenue += amount;
-                if (isCashplus) stats.canceled_cashplus++;
-                if (isCard) stats.canceled_card++;
-                break;
-        }
-    }
-    return stats;
+} else {
+    console.warn("⚠️ Supabase keys missing in .env - Running in Legacy Mode (Basic Auth only)");
 }
 
 // ===================================================================
-// 3. الموجه الرئيسي (Main Handler)
+// 2. الموجه الرئيسي (Main Handler)
 // ===================================================================
 export default async function handler(req, res) {
+    // إعدادات CORS (ضرورية جداً لتجنب Failed to fetch من المتصفح)
     const origin = req.headers.origin || '*';
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
 
-    // (UPDATE) التحقق باستخدام النظام الهجين
-    const authResult = await authenticate(req);
-    if (!authResult.isAuthenticated) {
-        return res.status(401).json({ error: 'Unauthorized access' });
-    }
-    const currentUser = authResult.user; // المستخدم الحالي
-
     try {
-        const url = req.url || '';
-
-        // --- (NEW) مسارات إدارة الموظفين (Admin Only) ---
-        if (currentUser.role === 'admin') {
-            if (req.method === 'POST' && url.includes('/add-user')) {
-                return await handleAddUser(req, res);
-            }
-            if (req.method === 'GET' && url.includes('/users')) {
-                return await handleListUsers(req, res);
-            }
-            if (req.method === 'DELETE' && url.includes('/delete-user')) {
-                return await handleDeleteUser(req, res);
-            }
+        // 1. التحقق من الهوية (Authentication)
+        const authResult = await authenticate(req);
+        if (!authResult.isAuthenticated) {
+            return res.status(401).json({ error: 'Unauthorized: يرجى تسجيل الدخول' });
         }
 
-        // --- مسارات البيانات (Google Sheets) ---
-        if (req.method === 'GET') {
-            return handleGet(req, res, currentUser);
-        } else if (req.method === 'POST') {
-            // التعامل مع طلبات تسجيل الدخول القديمة إن وجدت
-            if (req.body && req.body.username && req.body.password) return handleLogin(req, res);
-            if (url.includes('/login')) return handleLogin(req, res);
-            if (url.includes('/logout')) return handleLogout(req, res);
+        const currentUser = authResult.user; // { role, email, type, id }
 
-            return handlePost(req, res, currentUser);
+        // 2. توجيه الطلبات
+        const url = req.url || '';
+
+        // --- أ. مسارات إدارة الموظفين (Supabase User Management) ---
+        // (تعمل فقط إذا كان Supabase مفعلاً والمستخدم Admin)
+        if (supabaseAdmin && currentUser.role === 'admin') {
+            if (req.method === 'POST' && url.includes('/add-user')) return await handleAddUser(req, res);
+            if (req.method === 'GET' && url.includes('/users')) return await handleListUsers(req, res);
+            if (req.method === 'DELETE' && url.includes('/delete-user')) return await handleDeleteUser(req, res);
+        }
+
+        // --- ب. مسارات البيانات (Google Sheets Operations) ---
+        if (req.method === 'GET') {
+            return await handleGet(req, res, currentUser);
+        } else if (req.method === 'POST') {
+            // التعامل مع تسجيل الدخول القديم
+            if (url.includes('/login') || (req.body && req.body.username)) return handleLogin(req, res);
+            if (url.includes('/logout')) return handleLogout(req, res);
+            return await handlePost(req, res, currentUser);
         } else if (req.method === 'PUT') {
-            return handlePut(req, res, currentUser);
+            return await handlePut(req, res, currentUser);
         } else if (req.method === 'DELETE') {
-            // (UPDATE) الحذف مسموح للمدير فقط
+            // الحماية: الحذف للمدير فقط
             if (currentUser.role !== 'admin') {
-                return res.status(403).json({ error: 'حذف البيانات مسموح للمدير فقط' });
+                return res.status(403).json({ error: 'عفواً، الحذف مسموح للمدير فقط.' });
             }
-            return handleDelete(req, res);
+            return await handleDelete(req, res);
         } else {
             return res.status(405).json({ error: 'Method not allowed' });
         }
 
     } catch (error) {
-        console.error('Handler Error:', error);
-        res.status(500).json({ error: 'Internal server error', details: error.message });
+        console.error('CRITICAL SERVER ERROR:', error);
+        // إرجاع رسالة خطأ واضحة بدلاً من انهيار الاتصال
+        return res.status(500).json({ error: 'Internal server error', details: error.message });
     }
 }
 
 // ===================================================================
-// 4. دوال المصادقة (Updated Authentication)
+// 3. منطق التحقق الهجين (Hybrid Auth Logic)
 // ===================================================================
-
-async function handleLogin(req, res) {
-    // دالة تسجيل الدخول القديمة (Session Cookie) - تم الاحتفاظ بها
-    try {
-        const { username, password } = req.body || {};
-        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
-
-        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            const maxAge = 24 * 60 * 60;
-            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            const sameSite = 'None';
-            const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
-            res.setHeader('Set-Cookie', cookie);
-            return res.status(200).json({ success: true, message: 'Logged in' });
-        }
-        return res.status(401).json({ error: 'Invalid credentials' });
-    } catch (error) {
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
 async function authenticate(req) {
     const authHeader = req.headers.authorization;
-    
-    // 1. التحقق عبر الكوكيز (للجلسات القديمة)
     const cookieHeader = req.headers.cookie || '';
+
+    // 1. التحقق عبر الكوكيز (للجلسات القديمة)
     if (cookieHeader.includes('admin_session=1')) {
-        return { isAuthenticated: true, user: { role: 'admin', email: 'master_cookie', type: 'master' } };
+        return { isAuthenticated: true, user: { role: 'admin', email: 'Master Admin', type: 'master' } };
     }
 
     if (!authHeader) return { isAuthenticated: false };
@@ -227,13 +120,14 @@ async function authenticate(req) {
         
         const [u, p] = decoded.split(':');
         if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) {
-            return { isAuthenticated: true, user: { role: 'admin', email: 'master_admin', type: 'master' } };
+            return { isAuthenticated: true, user: { role: 'admin', email: 'Master Admin', type: 'master' } };
         }
     }
 
-    // 3. (NEW) التحقق عبر Supabase Token
-    if (scheme === 'Bearer') {
+    // 3. التحقق عبر Supabase Token (إذا كان Supabase مفعلاً)
+    if (scheme === 'Bearer' && supabaseAdmin) {
         const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+        
         if (error || !user) return { isAuthenticated: false };
 
         const role = user.user_metadata?.role || 'staff';
@@ -246,46 +140,42 @@ async function authenticate(req) {
     return { isAuthenticated: false };
 }
 
-async function handleLogout(req, res) {
-    try {
-        const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-        const sameSite = 'None';
-        const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
-        res.setHeader('Set-Cookie', cookie);
-        return res.status(200).json({ success: true, message: 'Logged out' });
-    } catch (error) {
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-}
-
 // ===================================================================
-// 5. العمليات على البيانات (CRUD with Google Sheets)
+// 4. العمليات الأساسية (Google Sheets CRUD)
 // ===================================================================
 
 async function getGoogleSheet() {
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+    try {
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+        const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
-    const serviceAccountAuth = new JWT({
-        email: serviceAccountEmail,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+        if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+            throw new Error("Google Sheets credentials missing in .env");
+        }
 
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    await doc.loadInfo();
-    let sheet = doc.sheetsByTitle["Leads"];
-    if (!sheet) sheet = doc.sheetsByIndex[0];
-    return sheet;
+        const serviceAccountAuth = new JWT({
+            email: serviceAccountEmail,
+            key: privateKey,
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+
+        const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+        await doc.loadInfo();
+        let sheet = doc.sheetsByTitle["Leads"];
+        if (!sheet) sheet = doc.sheetsByIndex[0];
+        return sheet;
+    } catch (e) {
+        console.error("Google Sheet Connection Error:", e);
+        throw e;
+    }
 }
 
-async function handleGet(req, res, user) {
-    // (نفس منطق الجلب والفلترة الأصلي، مع إضافة معلومات المستخدم للرد)
-    const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
-
+async function handleGet(req, res, currentUser) {
     const sheet = await getGoogleSheet();
     const rows = await sheet.getRows();
+
+    const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
 
     const data = rows.map(row => ({
         timestamp: row.get('Timestamp') || '',
@@ -307,19 +197,17 @@ async function handleGet(req, res, user) {
         utm_source: row.get('utm_source') || '',
         utm_medium: row.get('utm_medium') || '',
         utm_campaign: row.get('utm_campaign') || '',
-        utm_term: row.get('utm_term') || '',
         utm_content: row.get('utm_content') || '',
+        lastUpdatedBy: row.get('Last Updated By') || '', 
         parsedDate: parseDate(row.get('Timestamp') || ''),
-        normalizedCourse: normalizeCourseName(row.get('Selected Course') || ''),
-        // (NEW) قراءة حقل آخر تعديل
-        lastUpdatedBy: row.get('Last Updated By') || ''
+        normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
     }));
-    
-    const overallStats = calculateStatistics(data);
-    const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
 
+    const overallStats = calculateStatistics(data);
+    
+    // فلترة البيانات
     let filteredData = data;
-    let filteredStats = overallStats;
+    const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all') || courseFilter);
 
     if (isFiltered) {
         filteredData = data.filter(item => {
@@ -331,15 +219,15 @@ async function handleGet(req, res, user) {
             const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
             return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
         });
-        filteredStats = calculateStatistics(filteredData);
     }
+
+    const filteredStats = isFiltered ? calculateStatistics(filteredData) : overallStats;
 
     res.status(200).json({
         success: true,
         statistics: { overall: overallStats, filtered: filteredStats },
         data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
-        isFiltered: isFiltered,
-        currentUser: { role: user.role, email: user.email } // إرسال معلومات المستخدم للواجهة
+        currentUser: { role: currentUser.role, email: currentUser.email }
     });
 }
 
@@ -369,11 +257,10 @@ async function handlePost(req, res, user) {
         'utm_content': newItem.utm_content || '',
         'CashPlus Code': newItem.cashplusCode || '',
         'Last4Digits': newItem.last4 || '',
-        // (NEW) تسجيل من قام بالإضافة
         'Last Updated By': user ? user.email : 'System'
     });
 
-    res.status(201).json({ success: true, message: 'Record created successfully' });
+    res.status(201).json({ success: true, message: 'Record created' });
 }
 
 async function handlePut(req, res, user) {
@@ -382,119 +269,192 @@ async function handlePut(req, res, user) {
     const updatedItem = req.body;
     const id = updatedItem.originalInquiryId;
 
-    if (!id) return res.status(400).json({ error: 'ID is required for update' });
-
     const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
     if (rowIndex === -1) return res.status(404).json({ error: 'Record not found' });
 
-    const rowToUpdate = rows[rowIndex];
+    const row = rows[rowIndex];
 
-    if(updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
-    if(updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
-    if(updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
-    if(updatedItem.course) rowToUpdate.set('Selected Course', updatedItem.course);
-    if(updatedItem.qualification) rowToUpdate.set('Qualification', updatedItem.qualification);
-    if(updatedItem.experience) rowToUpdate.set('Experience', updatedItem.experience);
-    if(updatedItem.status) rowToUpdate.set('Payment Status', updatedItem.status);
-    if(updatedItem.paymentMethod) rowToUpdate.set('Payment Method', updatedItem.paymentMethod);
-    if(updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
-    if(updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
-    if(updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
-    if(updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
-    if(updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
-    if(updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
-    if(updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
-    if(updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
+    // تحديث الحقول
+    if(updatedItem.customerName) row.set('Full Name', updatedItem.customerName);
+    if(updatedItem.customerPhone) row.set('Phone Number', updatedItem.customerPhone);
+    if(updatedItem.customerEmail) row.set('Email', updatedItem.customerEmail);
+    if(updatedItem.course) row.set('Selected Course', updatedItem.course);
+    if(updatedItem.qualification) row.set('Qualification', updatedItem.qualification);
+    if(updatedItem.experience) row.set('Experience', updatedItem.experience);
+    if(updatedItem.status) row.set('Payment Status', updatedItem.status);
+    if(updatedItem.paymentMethod) row.set('Payment Method', updatedItem.paymentMethod);
+    if(updatedItem.finalAmount) row.set('Amount', updatedItem.finalAmount);
+    if(updatedItem.transactionId) row.set('Transaction ID', updatedItem.transactionId);
+    if(updatedItem.language) row.set('Lang', updatedItem.language);
+    if(updatedItem.utm_source) row.set('utm_source', updatedItem.utm_source);
+    if(updatedItem.utm_medium) row.set('utm_medium', updatedItem.utm_medium);
+    if(updatedItem.utm_campaign) row.set('utm_campaign', updatedItem.utm_campaign);
+    if(updatedItem.utm_content) row.set('utm_content', updatedItem.utm_content);
+    
+    row.set('Last Updated By', user ? user.email : 'System');
 
-    // (NEW) تسجيل من قام بالتعديل
-    rowToUpdate.set('Last Updated By', user ? user.email : 'System');
-
-    await rowToUpdate.save();
-    res.status(200).json({ success: true, message: 'Record updated successfully' });
+    await row.save();
+    res.status(200).json({ success: true, message: 'Updated successfully' });
 }
 
 async function handleDelete(req, res) {
     const { id } = req.body;
-    if (!id) return res.status(400).json({ error: 'ID is required' });
-
     const sheet = await getGoogleSheet();
     const rows = await sheet.getRows();
-
     const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
-    if (rowIndex === -1) return res.status(404).json({ error: 'Record not found' });
 
+    if (rowIndex === -1) return res.status(404).json({ error: 'Record not found' });
+    
     await rows[rowIndex].delete();
-    res.status(200).json({ success: true, message: 'Record deleted successfully' });
+    res.status(200).json({ success: true, message: 'Deleted successfully' });
 }
 
 // ===================================================================
-// 6. دوال إدارة الموظفين (New Functions)
+// 5. دوال إدارة الموظفين (Supabase)
 // ===================================================================
 
 async function handleAddUser(req, res) {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'خدمة إدارة المستخدمين غير مفعلة (Missing Config)' });
     const { email, password, role } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'البيانات ناقصة' });
-
     const { data, error } = await supabaseAdmin.auth.admin.createUser({
-        email: email,
-        password: password,
-        email_confirm: true,
-        user_metadata: { role: role || 'staff' }
+        email, password, email_confirm: true, user_metadata: { role: role || 'staff' }
     });
-
     if (error) return res.status(400).json({ error: error.message });
     return res.status(201).json({ success: true, user: data.user });
 }
 
 async function handleListUsers(req, res) {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'Service unavailable' });
     const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers();
     if (error) return res.status(400).json({ error: error.message });
     
     const cleanUsers = users.map(u => ({
-        id: u.id,
-        email: u.email,
-        role: u.user_metadata?.role || 'staff',
-        last_sign_in: u.last_sign_in_at,
-        created_at: u.created_at
+        id: u.id, email: u.email, role: u.user_metadata?.role || 'staff',
+        last_sign_in: u.last_sign_in_at, created_at: u.created_at
     }));
-    
     return res.status(200).json({ users: cleanUsers });
 }
 
 async function handleDeleteUser(req, res) {
+    if (!supabaseAdmin) return res.status(503).json({ error: 'Service unavailable' });
     const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'User ID required' });
-
     const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
     if (error) return res.status(400).json({ error: error.message });
-
     return res.status(200).json({ success: true });
 }
 
 // ===================================================================
-// 7. دوال تطبيع الأسماء (Normalizing - Original)
+// 6. دوال مساعدة (Login & Normalization)
 // ===================================================================
 
-const COURSE_DEFINITIONS = {
-    'PMP': ['Gestion de Projet Professionnelle (PMP®)', 'Professional Project Management (PMP®)', 'الإدارة الاحترافية للمشاريع (PMP®)'],
-    'Planning': ['Préparation et Planification de Chantier', 'Site Preparation and Planning', 'إعداد وتخطيط المواقع'],
-    'QSE': ['Normes QSE en Chantier', 'QSE Standards on Sites', 'معايير QSE في المواقع'],
-    'Soft Skills': ['Soft Skills pour Managers', 'Soft Skills for Managers', 'المهارات الناعمة للمديرين']
-};
+async function handleLogin(req, res) {
+    const { username, password } = req.body || {};
+    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+        const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${24*60*60}; SameSite=None; Secure`;
+        res.setHeader('Set-Cookie', cookie);
+        return res.status(200).json({ success: true, message: 'Logged in' });
+    }
+    return res.status(401).json({ error: 'Invalid credentials' });
+}
+
+async function handleLogout(req, res) {
+    const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=None; Secure`;
+    res.setHeader('Set-Cookie', cookie);
+    return res.status(200).json({ success: true });
+}
+
+function parseDate(ts) {
+    if (!ts) return null;
+    let date;
+    const isoTest = new Date(ts);
+    if (!isNaN(isoTest.getTime())) date = isoTest;
+    else {
+        let cleaned = ts.replace(" h ", ":").replace(" min ", ":").replace(" s", "");
+        date = new Date(cleaned);
+    }
+    return !isNaN(date.getTime()) ? date : null;
+}
+
+function checkDateFilter(item, filterValue, customStart, customEnd) {
+    if (!filterValue || filterValue === 'all') return true;
+    const itemDate = item.parsedDate;
+    if (!itemDate) return false;
+    
+    const now = new Date();
+    let startDate;
+    switch (filterValue) {
+        case 'hour': startDate = new Date(now.getTime() - (3600000)); return itemDate >= startDate;
+        case 'day': startDate = new Date(now.getTime() - (86400000)); return itemDate >= startDate;
+        case 'week': startDate = new Date(now.getTime() - (7 * 86400000)); return itemDate >= startDate;
+        case 'month': startDate = new Date(now.getTime() - (30 * 86400000)); return itemDate >= startDate;
+        case '3month': startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()); return itemDate >= startDate;
+        case 'year': startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); return itemDate >= startDate;
+        case 'custom':
+            if (customStart && customEnd) {
+                const start = new Date(customStart + 'T00:00:00'); 
+                const end = new Date(customEnd + 'T23:59:59');
+                return itemDate >= start && itemDate <= end;
+            }
+            return true;
+        default: return true;
+    }
+}
+
+function calculateStatistics(dataArray) {
+    const stats = {
+        totalPayments: dataArray.length, paidPayments: 0, pendingPayments: 0, failedPayments: 0, canceledPayments: 0,
+        cashplusPayments: 0, cardPayments: 0,
+        netRevenue: 0, pendingRevenue: 0, failedRevenue: 0, canceledRevenue: 0,
+        paid_cashplus: 0, paid_card: 0, net_cashplus_revenue: 0, net_card_revenue: 0,
+        // تمت إضافة الحقول التي كانت مفقودة لضمان عمل الواجهة
+        paid_cash: 0, paid_bank: 0, net_cash_revenue: 0, net_bank_revenue: 0,
+        pending_cashplus: 0, failed_cashplus: 0, canceled_cashplus: 0
+    };
+
+    if (!dataArray || dataArray.length === 0) return stats;
+
+    for (const item of dataArray) {
+        const amount = parseFloat(item.finalAmount) || 0;
+        const pm = (item.paymentMethod || '').toLowerCase();
+        const isCashplus = pm === 'cashplus';
+        const isCard = pm === 'card' || pm === 'credit_card';
+        const isCash = pm === 'cash';
+        const isBank = pm.includes('bank') || pm === 'virement';
+
+        if (isCashplus) stats.cashplusPayments++;
+        if (isCard) stats.cardPayments++;
+
+        switch (item.status) {
+            case 'paid':
+                stats.paidPayments++; stats.netRevenue += amount;
+                if (isCashplus) { stats.paid_cashplus++; stats.net_cashplus_revenue += amount; }
+                if (isCard) { stats.paid_card++; stats.net_card_revenue += amount; }
+                if (isCash) { stats.paid_cash++; stats.net_cash_revenue += amount; }
+                if (isBank) { stats.paid_bank++; stats.net_bank_revenue += amount; }
+                break;
+            case 'pending':
+                stats.pendingPayments++; stats.pendingRevenue += amount;
+                if (isCashplus) stats.pending_cashplus++;
+                break;
+            case 'failed':
+                stats.failedPayments++; stats.failedRevenue += amount;
+                if (isCashplus) stats.failed_cashplus++;
+                break;
+            case 'canceled':
+                stats.canceledPayments++; stats.canceledRevenue += amount;
+                if (isCashplus) stats.canceled_cashplus++;
+                break;
+        }
+    }
+    return stats;
+}
 
 function normalizeCourseName(raw) {
     if (!raw) return 'دورات أخرى';
-    const trimmed = String(raw).trim();
-    if (trimmed === '' || trimmed.toLowerCase() === 'n/a') return 'غير محدد';
-    const lower = trimmed.toLowerCase();
-    if (lower.includes('pmp')) return 'PMP';
-    if (lower.includes('planning')) return 'Planning';
-    if (lower.includes('qse')) return 'QSE';
-    if (lower.includes('softskills') || lower.includes('soft skills')) return 'Soft Skills';
-    for (const shortcode in COURSE_DEFINITIONS) {
-        for (const t of COURSE_DEFINITIONS[shortcode]) {
-            if (t && typeof t === 'string' && t.trim().toLowerCase() === trimmed.toLowerCase()) return shortcode;
-        }
-    }
+    const trimmed = String(raw).trim().toLowerCase();
+    if (trimmed.includes('pmp')) return 'PMP';
+    if (trimmed.includes('planning')) return 'Planning';
+    if (trimmed.includes('qse')) return 'QSE';
+    if (trimmed.includes('soft')) return 'Soft Skills';
     return 'دورات أخرى';
 }
