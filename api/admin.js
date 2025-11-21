@@ -2,10 +2,54 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 // ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
 // import { validateRequired, validateEmail } from './utils.js'; 
+import TelegramBot from 'node-telegram-bot-api';
 
-// Simple authentication
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
+// --- إعدادات تيليجرام (أضفها هنا) ---
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// ترجمات رسائل تيليجرام
+const manualTelegramTranslations = {
+  ar: {
+    title: "⚠️ <b>إدخال يدوي جديد (Admin)</b> 🛠️",
+    course: "<b>الدورة:</b>",
+    name: "<b>الاسم:</b>",
+    phone: "<b>الهاتف:</b>",
+    method: "<b>طريقة الدفع:</b>",
+    amount: "<b>المبلغ:</b>",
+    status: "<b>الحالة:</b>",
+    tx_id: "<b>المعرف/الإيصال:</b>",
+    note: "<b>ملاحظة:</b> تمت الإضافة يدوياً عبر لوحة التحكم."
+  },
+  fr: {
+    title: "⚠️ <b>Nouvelle Saisie Manuelle (Admin)</b> 🛠️",
+    course: "<b>Formation:</b>",
+    name: "<b>Nom:</b>",
+    phone: "<b>Tél:</b>",
+    method: "<b>Méthode:</b>",
+    amount: "<b>Montant:</b>",
+    status: "<b>Statut:</b>",
+    tx_id: "<b>ID/Reçu:</b>",
+    note: "<b>Note:</b> Ajouté manuellement via le Dashboard."
+  },
+  en: {
+    title: "⚠️ <b>New Manual Entry (Admin)</b> 🛠️",
+    course: "<b>Course:</b>",
+    name: "<b>Name:</b>",
+    phone: "<b>Phone:</b>",
+    method: "<b>Method:</b>",
+    amount: "<b>Amount:</b>",
+    status: "<b>Status:</b>",
+    tx_id: "<b>ID/Receipt:</b>",
+    note: "<b>Note:</b> Manually added via Dashboard."
+  }
+};
+
+// دالة تنظيف النصوص لتيليجرام
+function cleanHTML(text) {
+    if (!text) return '';
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 // ===================================================================
 // (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
@@ -289,47 +333,66 @@ async function handlePost(req, res) {
         if (!await authenticate(req, res)) return;
 
         const sheet = await getGoogleSheet();
-        
         const newItem = req.body;
         
-        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
+        // 1. الحفظ في Google Sheets
         await sheet.addRow({
             'Timestamp': new Date().toISOString(),
             'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
             'Phone Number': newItem.customerPhone,
-            
-            // الحقول التي كانت مفقودة
             'Selected Course': newItem.course,
             'Qualification': newItem.qualification || 'Not Specified',
             'Experience': newItem.experience || 'Not Specified',
-            
             'Payment Status': newItem.status,
             'Payment Method': newItem.paymentMethod,
-            
-            // الربط الصحيح لرقم المعاملة والعملة
             'Transaction ID': newItem.transactionId || '', 
-            'Currency': 'MAD', // قيمة ثابتة دائماً
+            'Currency': 'MAD', 
             'Amount': newItem.finalAmount,
-            
             'Lang': newItem.language,
-            
-            // كل حقول UTM
             'utm_source': newItem.utm_source || 'manual_entry',
             'utm_medium': newItem.utm_medium || '',
             'utm_campaign': newItem.utm_campaign || '',
             'utm_term': newItem.utm_term || '',
             'utm_content': newItem.utm_content || '',
-            
-            // الحقول التقنية الإضافية (اختياري حسب جدولك)
             'CashPlus Code': newItem.cashplusCode || '',
             'Last4Digits': newItem.last4 || ''
         });
 
+        // 2. إرسال إشعار تيليجرام (الجزء الجديد)
+        if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+            try {
+                const bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
+                const lang = newItem.language || 'fr';
+                const t = manualTelegramTranslations[lang] || manualTelegramTranslations['fr'];
+                
+                // تنسيق الرسالة
+                const message = `
+${t.title}
+-----------------------------------
+${t.course} ${cleanHTML(newItem.course)}
+${t.name} ${cleanHTML(newItem.customerName)}
+${t.phone} ${cleanHTML(newItem.customerPhone)}
+-----------------------------------
+${t.amount} ${newItem.finalAmount} MAD
+${t.method} ${cleanHTML(newItem.paymentMethod)}
+${t.status} ${newItem.status === 'paid' ? '✅ PAID' : '⏳ PENDING'}
+${t.tx_id} ${cleanHTML(newItem.transactionId)}
+-----------------------------------
+${t.note}
+                `;
+
+                await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
+            } catch (telegramError) {
+                console.error('Telegram Notification Failed:', telegramError.message);
+                // لا نوقف العملية إذا فشل تيليجرام، البيانات حُفظت في الشيت وهذا الأهم
+            }
+        }
+
         res.status(201).json({
             success: true,
-            message: 'Record created successfully'
+            message: 'Record created and notification sent'
         });
 
     } catch (error) {
@@ -567,3 +630,4 @@ function normalizeCourseName(raw) {
     }
     return 'دورات أخرى';
 }
+
