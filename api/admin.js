@@ -165,8 +165,11 @@ async function handleAddUser(req, res) {
     if (userData.user) {
         const { error: roleError } = await supabase
             .from('user_roles')
-            .insert([{ user_id: userData.user.id, role: role || 'editor' }]);
-        
+.insert([{ 
+    user_id: userData.user.id, 
+    role: role,  // سنصلح هذا المتغير في الخطوة التالية
+    email: email // <--- هذا هو الحل لمشكلة الـ NULL
+}]);        
         if (roleError) {
             // تنظيف: حذف المستخدم إذا فشل تعيين الدور
             await supabase.auth.admin.deleteUser(userData.user.id);
