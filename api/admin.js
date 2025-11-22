@@ -446,7 +446,11 @@ async function handleGet(req, res, user) {
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
-
+// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
+        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
+        if (user.role !== 'super_admin') {
+            data = data.filter(item => item.status.toLowerCase() !== 'paid');
+        }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
@@ -588,6 +592,23 @@ async function handlePut(req, res, user) {
         }
 
         const rowToUpdate = rows[rowIndex];
+
+        // --- (SECURITY CHECK) التحقق الأمني قبل التعديل ---
+        const currentStatus = (rowToUpdate.get('Payment Status') || '').toLowerCase();
+
+        // إذا لم يكن سوبر أدمن، وكانت الحالة الحالية "مدفوع"، نمنع التعديل
+        // (هذا حماية إضافية في حال حاول استدعاء الـ API مباشرة لمعاملة مدفوعة)
+        if (user.role !== 'super_admin') {
+             // شرط 1: لا يمكنه تعديل معاملة هي أصلاً مدفوعة
+            if (currentStatus === 'paid') {
+                return res.status(403).json({ error: 'لا تملك صلاحية تعديل المعاملات المدفوعة.' });
+            }
+            
+            // شرط 2: التحقق من صلاحية التعديل العامة (التي أضفناها سابقاً)
+            if (!user.permissions?.can_edit) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+            }
+        }
 
         // تحديث شامل لكل الحقول
         if (updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
