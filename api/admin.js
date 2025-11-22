@@ -165,11 +165,14 @@ async function handleAddUser(req, res) {
     if (userData.user) {
         const { error: roleError } = await supabase
             .from('user_roles')
-.insert([{ 
-    user_id: userData.user.id, 
-    role: role,  // سنصلح هذا المتغير في الخطوة التالية
-    email: email // <--- هذا هو الحل لمشكلة الـ NULL
-}]);        
+            .insert([{ 
+                user_id: userData.user.id, 
+                role: role, 
+                email: email,
+                // حفظ الصلاحيات
+                can_edit: role === 'super_admin' ? true : (can_edit || false),
+                can_view_stats: role === 'super_admin' ? true : (can_view_stats || false)
+            }]);        
         if (roleError) {
             // تنظيف: حذف المستخدم إذا فشل تعيين الدور
             await supabase.auth.admin.deleteUser(userData.user.id);
@@ -269,12 +272,17 @@ export default async function handler(req, res) {
         } else if (req.method === 'POST') {
             return handlePost(req, res, user);
         } else if (req.method === 'PUT') {
-            return handlePut(req, res, user);
-        } else if (req.method === 'DELETE') {
-            if (user.role !== 'super_admin') {
-                return res.status(403).json({ error: 'Delete action is restricted to Admins only' });
-            }
-            return handleDelete(req, res, user);
+    // التحقق من صلاحية التعديل
+    if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
+        return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+    }
+    return handlePut(req, res, user);
+} else if (req.method === 'DELETE') {
+    // التحقق من صلاحية الحذف (عادة نربطها بالتعديل أو نضيف صلاحية delete خاصة)
+    if (user.role !== 'super_admin') { // الحذف حصري للآدمن كما اتفقنا سابقاً، أو يمكن ربطه بـ can_edit
+         return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
+    }
+    return handleDelete(req, res, user);
         } else {
             return res.status(405).json({ error: 'Method not allowed' });
         }
@@ -323,18 +331,23 @@ async function handleLogin(req, res) {
 
             if (!error && data.user && data.session) {
                 const { data: roleData } = await supabase
-                    .from('user_roles')
-                    .select('role')
-                    .eq('user_id', data.user.id)
-                    .single();
+    .from('user_roles')
+    .select('role, can_edit, can_view_stats') // جلب الصلاحيات الجديدة
+    .eq('user_id', data.user.id)
+    .single();
 
-                return res.status(200).json({
-                    success: true,
-                    message: 'Logged in via Supabase',
-                    token: data.session.access_token,
-                    role: roleData?.role || 'editor',
-                    type: 'supabase'
-                });
+return res.status(200).json({
+    success: true,
+    message: 'Logged in via Supabase',
+    token: data.session.access_token,
+    role: roleData?.role || 'editor',
+    // نرسل كائن الصلاحيات للواجهة
+    permissions: {
+        can_edit: roleData?.role === 'super_admin' ? true : (roleData?.can_edit ?? false),
+        can_view_stats: roleData?.role === 'super_admin' ? true : (roleData?.can_view_stats ?? false)
+    },
+    type: 'supabase'
+});
             }
         } else {
              console.warn('Login attempted via Supabase but Supabase is not configured.');
@@ -662,17 +675,22 @@ async function authenticateUser(req, res) {
             if (!error && user) {
                 // جلب الصلاحيات
                 const { data: roleData } = await supabase
-                    .from('user_roles')
-                    .select('role')
-                    .eq('user_id', user.id)
-                    .single();
+    .from('user_roles')
+    .select('role, can_edit, can_view_stats') // <---
+    .eq('user_id', user.id)
+    .single();
 
-                return {
-                    email: user.email,
-                    id: user.id,
-                    role: roleData?.role || 'editor',
-                    type: 'supabase'
-                };
+return {
+    email: user.email,
+    id: user.id,
+    role: roleData?.role || 'editor',
+    // إضافة الصلاحيات للكائن
+    permissions: {
+        can_edit: roleData?.role === 'super_admin' ? true : !!roleData?.can_edit,
+        can_view_stats: roleData?.role === 'super_admin' ? true : !!roleData?.can_view_stats
+    },
+    type: 'supabase'
+};
             }
         } catch (e) {
             console.error('Supabase Auth Error:', e);
