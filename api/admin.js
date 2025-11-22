@@ -150,8 +150,7 @@ async function handleGetUsers(res) {
 
 // إضافة موظف جديد
 async function handleAddUser(req, res) {
-    const { email, password, role } = req.body;
-
+const { email, password, role, can_edit, can_view_stats } = req.body;
     // 1. إنشاء المستخدم في Supabase Auth
     const { data: userData, error: createError } = await supabase.auth.admin.createUser({
         email: email,
