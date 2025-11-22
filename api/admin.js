@@ -675,9 +675,14 @@ async function authenticateUser(req, res) {
                 // جلب الصلاحيات
                 const { data: roleData } = await supabase
     .from('user_roles')
-    .select('role, can_edit, can_view_stats') // <---
+    .select('role, can_edit, can_view_stats, is_frozen') // <---
     .eq('user_id', user.id)
     .single();
+
+    // (هام) التحقق من التجميد: إذا كان مجمداً، نرفض الدخول فوراً
+                if (roleData?.is_frozen) {
+                    return null; // سيؤدي هذا لعودة 401 وتسجيل الخروج في الواجهة
+                }
 
 return {
     email: user.email,
