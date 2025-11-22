@@ -14,13 +14,22 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 // تنبيه: نحتاج Service Role Key لإدارة المستخدمين (إنشاء/حذف)، وليس المفتاح العام
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; 
 
-// تهيئة عميل Supabase بصلاحيات الأدمن
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false
-  }
-});
+let supabase = null;
+
+if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+    try {
+        supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
+        });
+    } catch (error) {
+        console.warn('Supabase initialization failed:', error.message);
+    }
+} else {
+    console.warn('Supabase credentials missing. Running in Backdoor-Only mode.');
+}
 
 // ===================================================================
 // (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
@@ -305,32 +314,33 @@ async function handleLogin(req, res) {
             });
         }
 
-        // 2. Check Supabase Auth (If backdoor fails)
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email: username,
-            password: password
-        });
+        // 2. Supabase Check (فقط إذا كان مفعلاً)
+        if (supabase) {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: username,
+                password: password
+            });
 
-        if (error || !data.user || !data.session) {
-            return res.status(401).json({ error: 'Invalid credentials' });
+            if (!error && data.user && data.session) {
+                const { data: roleData } = await supabase
+                    .from('user_roles')
+                    .select('role')
+                    .eq('user_id', data.user.id)
+                    .single();
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Logged in via Supabase',
+                    token: data.session.access_token,
+                    role: roleData?.role || 'editor',
+                    type: 'supabase'
+                });
+            }
+        } else {
+             console.warn('Login attempted via Supabase but Supabase is not configured.');
         }
 
-        // جلب دور المستخدم (Role)
-        const { data: roleData } = await supabase
-            .from('user_roles')
-            .select('role')
-            .eq('user_id', data.user.id)
-            .single();
-
-        // في حالة Supabase، نعيد الـ Access Token للواجهة
-        // الواجهة ستقوم بتخزينه واستخدامه في هيدر Authorization: Bearer ...
-        return res.status(200).json({
-            success: true,
-            message: 'Logged in via Supabase',
-            token: data.session.access_token, // <--- هذا هو المهم
-            role: roleData?.role || 'editor',
-            type: 'supabase'
-        });
+        return res.status(401).json({ error: 'Invalid credentials' });
 
     } catch (error) {
         console.error('Login error', error);
@@ -644,33 +654,32 @@ async function authenticateUser(req, res) {
 
     // 2. التحقق عبر Supabase (للموظفين)
     // نتوقع توكن من نوع Bearer قادم من الواجهة
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
-        
-        // التحقق من صحة التوكن
-        const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (supabase && authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+            const token = authHeader.split(' ')[1];
+            const { data: { user }, error } = await supabase.auth.getUser(token);
 
-        if (error || !user) {
-            return null; // فشل التحقق
+            if (!error && user) {
+                // جلب الصلاحيات
+                const { data: roleData } = await supabase
+                    .from('user_roles')
+                    .select('role')
+                    .eq('user_id', user.id)
+                    .single();
+
+                return {
+                    email: user.email,
+                    id: user.id,
+                    role: roleData?.role || 'editor',
+                    type: 'supabase'
+                };
+            }
+        } catch (e) {
+            console.error('Supabase Auth Error:', e);
         }
-
-        // جلب صلاحيات المستخدم من جدول user_roles
-        // نفترض أن الجدول يحتوي على columns: user_id, role
-        const { data: roleData } = await supabase
-            .from('user_roles')
-            .select('role')
-            .eq('user_id', user.id)
-            .single();
-
-        return {
-            email: user.email,
-            id: user.id,
-            role: roleData?.role || 'editor', // الافتراضي محرر
-            type: 'supabase'
-        };
     }
 
-    return null; // لم يتم العثور على أي وسيلة دخول صالحة
+    return null; 
 }
 
 async function getGoogleSheet() {
