@@ -208,11 +208,11 @@ async function handleChangePassword(req, res, currentUser) {
 
 /**
  * ===================================================================
- * Main Handler (Routes requests) - FULL REPLACEMENT
+ * Main Handler (Routes requests) - FIXED ROUTING
  * ===================================================================
  */
 export default async function handler(req, res) {
-    // 1. CORS Setup (أساسي لعمل الواجهة)
+    // 1. CORS Setup
     const origin = req.headers.origin || '*';
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -226,19 +226,19 @@ export default async function handler(req, res) {
     }
 
     try {
-        const urlPath = req.url || '';
+        // قراءة المعاملات من الرابط
+        const { action } = req.query || {}; 
 
-        // 3. Public Routes (Login / Logout) - لا تحتاج مصادقة مسبقة
-        // نتحقق إذا كان الرابط يحتوي على login أو الجسم يحتوي على بيانات دخول
-        if (urlPath.includes('/login') || (req.method === 'POST' && req.body && req.body.username && req.body.password && !req.headers.authorization)) {
+        // 3. Public Routes (Login / Logout)
+        // نتحقق من action login أو البحث في الجسم
+        if (action === 'login' || (req.method === 'POST' && req.body && req.body.username && !req.headers.authorization)) {
             return handleLogin(req, res);
         }
-        if (urlPath.includes('/logout')) {
+        if (action === 'logout' || req.url.includes('/logout')) {
             return handleLogout(req, res);
         }
 
-        // 4. Authentication Check (The Gatekeeper)
-        // نتحقق من هوية المستخدم (سواء كان Master أو موظف Supabase)
+        // 4. Authentication Check
         const user = await authenticateUser(req, res);
         
         if (!user) {
@@ -246,23 +246,21 @@ export default async function handler(req, res) {
         }
 
         // 5. User Management Routes (Super Admin Only)
-        // هذه الراوتات خاصة بإضافة الموظفين وحذفهم
-        if (urlPath.includes('/users') || urlPath.includes('/add-user') || urlPath.includes('/delete-user') || urlPath.includes('/change-password')) {
+        // نستخدم action للتمييز بدلاً من المسار
+        if (['get_users', 'add_user', 'delete_user', 'change_password'].includes(action)) {
             
-            // تحقق إضافي: هل المستخدم الحالي Super Admin؟
-            // ملاحظة: تغيير الباسورد مسموح للمستخدم لنفسه، لذا نعالجه بداخل الدالة
-            if (user.role !== 'super_admin' && !urlPath.includes('/change-password')) {
+            // استثناء: تغيير كلمة المرور مسموح للمستخدم لنفسه
+            if (user.role !== 'super_admin' && action !== 'change_password') {
                  return res.status(403).json({ error: 'Forbidden: Admins only' });
             }
 
-            if (req.method === 'GET') return handleGetUsers(res);
-            if (req.method === 'POST' && urlPath.includes('/add-user')) return handleAddUser(req, res);
-            if (req.method === 'DELETE' || urlPath.includes('/delete-user')) return handleDeleteUser(req, res);
-            if (req.method === 'POST' && urlPath.includes('/change-password')) return handleChangePassword(req, res, user);
+            if (action === 'get_users') return handleGetUsers(res);
+            if (action === 'add_user') return handleAddUser(req, res);
+            if (action === 'delete_user') return handleDeleteUser(req, res);
+            if (action === 'change_password') return handleChangePassword(req, res, user);
         }
 
         // 6. Lead Management Routes (CRUD for Google Sheets)
-        // نمرر كائن "user" لكل دالة لاستخدامه في الـ Audit Trail
         if (req.method === 'GET') {
             return handleGet(req, res, user);
         } else if (req.method === 'POST') {
@@ -270,7 +268,6 @@ export default async function handler(req, res) {
         } else if (req.method === 'PUT') {
             return handlePut(req, res, user);
         } else if (req.method === 'DELETE') {
-            // RBAC: منع المحررين (Employees) من حذف السجلات
             if (user.role !== 'super_admin') {
                 return res.status(403).json({ error: 'Delete action is restricted to Admins only' });
             }
