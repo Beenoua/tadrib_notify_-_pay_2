@@ -130,22 +130,58 @@ function calculateStatistics(dataArray) {
 
 // جلب قائمة المستخدمين
 async function handleGetUsers(res) {
-    // نجلب المستخدمين من Auth وتفاصيلهم من جدول الأدوار
-    // ملاحظة: listUsers تحتاج صلاحيات service_role
+    // 1. جلب المستخدمين من Auth
     const { data: { users }, error } = await supabase.auth.admin.listUsers();
-    
     if (error) throw error;
 
-    // تحضير البيانات للعرض
-    const usersList = users.map(u => ({
-        id: u.id,
-        email: u.email,
-        last_sign_in: u.last_sign_in_at,
-        created_at: u.created_at
-        // يمكن دمج الدور هنا باستعلام إضافي إذا لزم الأمر
-    }));
+    // 2. جلب تفاصيل الأدوار (Roles & Frozen Status) لجميع المستخدمين
+    const { data: rolesData } = await supabase
+        .from('user_roles')
+        .select('user_id, role, is_frozen, can_edit, can_view_stats');
+
+    // تحويل المصفوفة إلى Map لسهولة البحث
+    const rolesMap = {};
+    if (rolesData) {
+        rolesData.forEach(r => rolesMap[r.user_id] = r);
+    }
+
+    // 3. دمج البيانات
+    const usersList = users.map(u => {
+        const r = rolesMap[u.id] || {};
+        return {
+            id: u.id,
+            email: u.email,
+            created_at: u.created_at,
+            role: r.role || 'editor',
+            is_frozen: !!r.is_frozen,
+            can_edit: !!r.can_edit,
+            can_view_stats: !!r.can_view_stats
+        };
+    });
 
     return res.status(200).json({ success: true, data: usersList });
+}
+
+// تحديث بيانات الموظف (صلاحيات + تجميد)
+async function handleUpdateUser(req, res) {
+    const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
+
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    // تحديث جدول user_roles
+    const { error } = await supabase
+        .from('user_roles')
+        .update({ 
+            role: role,
+            can_edit: role === 'super_admin' ? true : can_edit,
+            can_view_stats: role === 'super_admin' ? true : can_view_stats,
+            is_frozen: is_frozen // تحديث حالة التجميد
+        })
+        .eq('user_id', userId);
+
+    if (error) throw error;
+
+    return res.status(200).json({ success: true, message: 'User updated successfully' });
 }
 
 // إضافة موظف جديد
@@ -252,8 +288,7 @@ export default async function handler(req, res) {
 
         // 5. User Management Routes (Super Admin Only)
         // نستخدم action للتمييز بدلاً من المسار
-        if (['get_users', 'add_user', 'delete_user', 'change_password'].includes(action)) {
-            
+if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {            
             // استثناء: تغيير كلمة المرور مسموح للمستخدم لنفسه
             if (user.role !== 'super_admin' && action !== 'change_password') {
                  return res.status(403).json({ error: 'Forbidden: Admins only' });
@@ -263,6 +298,7 @@ export default async function handler(req, res) {
             if (action === 'add_user') return handleAddUser(req, res);
             if (action === 'delete_user') return handleDeleteUser(req, res);
             if (action === 'change_password') return handleChangePassword(req, res, user);
+            if (action === 'update_user') return handleUpdateUser(req, res); // <--- إضافة
         }
 
         // 6. Lead Management Routes (CRUD for Google Sheets)
