@@ -2,10 +2,34 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 // ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
 // import { validateRequired, validateEmail } from './utils.js'; 
+// أضف مكتبة Supabase هنا
+import { createClient } from '@supabase/supabase-js';
 
-// Simple authentication
+// إعدادات المصادقة الأصلية (الباب الخلفي)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
+
+// إعدادات Supabase (تأكد من إضافتها في ملف .env)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+// تنبيه: نحتاج Service Role Key لإدارة المستخدمين (إنشاء/حذف)، وليس المفتاح العام
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; 
+
+let supabase = null;
+
+if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+    try {
+        supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
+        });
+    } catch (error) {
+        console.warn('Supabase initialization failed:', error.message);
+    }
+} else {
+    console.warn('Supabase credentials missing. Running in Backdoor-Only mode.');
+}
 
 // ===================================================================
 // (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
@@ -100,81 +124,272 @@ function calculateStatistics(dataArray) {
     return stats;
 }
 
+// ===================================================================
+// User Management Handlers (New)
+// ===================================================================
+
+// جلب قائمة المستخدمين
+async function handleGetUsers(res) {
+    // 1. جلب المستخدمين من Auth
+    const { data: { users }, error } = await supabase.auth.admin.listUsers();
+    if (error) throw error;
+
+    // 2. جلب تفاصيل الأدوار (Roles & Frozen Status) لجميع المستخدمين
+    const { data: rolesData } = await supabase
+        .from('user_roles')
+        .select('user_id, role, is_frozen, can_edit, can_view_stats');
+
+    // تحويل المصفوفة إلى Map لسهولة البحث
+    const rolesMap = {};
+    if (rolesData) {
+        rolesData.forEach(r => rolesMap[r.user_id] = r);
+    }
+
+    // 3. دمج البيانات
+    const usersList = users.map(u => {
+        const r = rolesMap[u.id] || {};
+        return {
+            id: u.id,
+            email: u.email,
+            created_at: u.created_at,
+            role: r.role || 'editor',
+            is_frozen: !!r.is_frozen,
+            can_edit: !!r.can_edit,
+            can_view_stats: !!r.can_view_stats
+        };
+    });
+
+    return res.status(200).json({ success: true, data: usersList });
+}
+
+// تحديث بيانات الموظف (صلاحيات + تجميد)
+async function handleUpdateUser(req, res) {
+    const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
+
+    if (!userId) return res.status(400).json({ error: 'User ID is required' });
+
+    // تحديث جدول user_roles
+    const { error } = await supabase
+        .from('user_roles')
+        .update({ 
+            role: role,
+            can_edit: role === 'super_admin' ? true : can_edit,
+            can_view_stats: role === 'super_admin' ? true : can_view_stats,
+            is_frozen: is_frozen // تحديث حالة التجميد
+        })
+        .eq('user_id', userId);
+
+    if (error) throw error;
+
+    return res.status(200).json({ success: true, message: 'User updated successfully' });
+}
+
+// إضافة موظف جديد
+async function handleAddUser(req, res) {
+const { email, password, role, can_edit, can_view_stats } = req.body;
+    // 1. إنشاء المستخدم في Supabase Auth
+    const { data: userData, error: createError } = await supabase.auth.admin.createUser({
+        email: email,
+        password: password,
+        email_confirm: true // تفعيل الحساب مباشرة
+    });
+
+    if (createError) throw createError;
+
+    // 2. تعيين الصلاحية في جدول user_roles
+    if (userData.user) {
+        const { error: roleError } = await supabase
+            .from('user_roles')
+            .insert([{ 
+                user_id: userData.user.id, 
+                role: role, 
+                email: email,
+                // حفظ الصلاحيات
+                can_edit: role === 'super_admin' ? true : (can_edit || false),
+                can_view_stats: role === 'super_admin' ? true : (can_view_stats || false)
+            }]);        
+        if (roleError) {
+            // تنظيف: حذف المستخدم إذا فشل تعيين الدور
+            await supabase.auth.admin.deleteUser(userData.user.id);
+            throw roleError;
+        }
+    }
+
+    return res.status(201).json({ success: true, message: 'User created successfully' });
+}
+
+// حذف موظف
+async function handleDeleteUser(req, res) {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'User ID required' });
+
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) throw error;
+
+    return res.status(200).json({ success: true, message: 'User deleted' });
+}
+
+// تغيير كلمة المرور (للمستخدم نفسه أو من قبل الأدمن)
+async function handleChangePassword(req, res, currentUser) {
+    const { newPassword, userId } = req.body;
+    
+    // إذا كان سوبر أدمن ومعه userId -> يغير لأي شخص
+    // إذا كان مستخدم عادي -> يغير لنفسه فقط
+    const targetId = (currentUser.role === 'super_admin' && userId) ? userId : currentUser.id;
+
+    const { error } = await supabase.auth.admin.updateUserById(
+        targetId,
+        { password: newPassword }
+    );
+
+    if (error) throw error;
+    return res.status(200).json({ success: true, message: 'Password updated' });
+}
+
 
 /**
  * ===================================================================
- * Main Handler (Routes requests)
+ * Main Handler (Routes requests) - FIXED ROUTING
  * ===================================================================
  */
 export default async function handler(req, res) {
-    // CORS: allow the requesting origin and support credentials (cookies)
+    // 1. CORS Setup
     const origin = req.headers.origin || '*';
-    // When using credentials, Access-Control-Allow-Origin must be explicit (cannot be '*')
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    // Handle preflight requests (ensure credentials header present)
+    // 2. Preflight Requests
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;
     }
 
-    // Handle different HTTP methods and a special /login POST route
-    if (req.method === 'GET') {
-        return handleGet(req, res);
-    } else if (req.method === 'POST') {
-        // Support login/logout both when requests are targeted to /api/admin
-        // (Some platforms route /api/admin/login -> 404). Detect login by body fields.
-        try {
-            // If body contains username+password, treat as login request
-            if (req.body && req.body.username && req.body.password) {
-                return handleLogin(req, res);
-            }
-            const urlPath = req.url || '';
-            if (urlPath.includes('/login')) {
-                return handleLogin(req, res);
-            }
-            if (urlPath.includes('/logout')) {
-                return handleLogout(req, res);
-            }
-        } catch (e) {
-            // ignore and proceed to normal POST handling
+    try {
+        // قراءة المعاملات من الرابط
+        const { action } = req.query || {}; 
+
+        // 3. Public Routes (Login / Logout)
+        // نتحقق من action login أو البحث في الجسم
+        if (action === 'login' || (req.method === 'POST' && req.body && req.body.username && !req.headers.authorization)) {
+            return handleLogin(req, res);
         }
-        return handlePost(req, res);
-    } else if (req.method === 'PUT') {
-        return handlePut(req, res);
-    } else if (req.method === 'DELETE') {
-        return handleDelete(req, res);
-    } else {
-        return res.status(405).json({ error: 'Method not allowed' });
+        if (action === 'logout' || req.url.includes('/logout')) {
+            return handleLogout(req, res);
+        }
+
+        // 4. Authentication Check
+        const user = await authenticateUser(req, res);
+        
+        if (!user) {
+            return res.status(401).json({ error: 'Unauthorized access: Invalid token or credentials' });
+        }
+
+        // 5. User Management Routes (Super Admin Only)
+        // نستخدم action للتمييز بدلاً من المسار
+if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {            
+            // استثناء: تغيير كلمة المرور مسموح للمستخدم لنفسه
+            if (user.role !== 'super_admin' && action !== 'change_password') {
+                 return res.status(403).json({ error: 'Forbidden: Admins only' });
+            }
+
+            if (action === 'get_users') return handleGetUsers(res);
+            if (action === 'add_user') return handleAddUser(req, res);
+            if (action === 'delete_user') return handleDeleteUser(req, res);
+            if (action === 'change_password') return handleChangePassword(req, res, user);
+            if (action === 'update_user') return handleUpdateUser(req, res); // <--- إضافة
+        }
+
+        // 6. Lead Management Routes (CRUD for Google Sheets)
+        if (req.method === 'GET') {
+            return handleGet(req, res, user);
+        } else if (req.method === 'POST') {
+            return handlePost(req, res, user);
+        } else if (req.method === 'PUT') {
+    // التحقق من صلاحية التعديل
+    if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
+        return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+    }
+    return handlePut(req, res, user);
+} else if (req.method === 'DELETE') {
+    // التحقق من صلاحية الحذف (عادة نربطها بالتعديل أو نضيف صلاحية delete خاصة)
+    if (user.role !== 'super_admin') { // الحذف حصري للآدمن كما اتفقنا سابقاً، أو يمكن ربطه بـ can_edit
+         return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
+    }
+    return handleDelete(req, res, user);
+        } else {
+            return res.status(405).json({ error: 'Method not allowed' });
+        }
+
+    } catch (error) {
+        console.error('Handler Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
     }
 }
 
 /**
  * ===================================================================
- * (POST) Login - sets an HttpOnly cookie for session-based auth
+ * (POST) Login - Hybrid (Backdoor First, then Supabase)
  * ===================================================================
  */
 async function handleLogin(req, res) {
     try {
         const { username, password } = req.body || {};
         if (!username || !password) {
-            return res.status(400).json({ error: 'username and password required' });
+            return res.status(400).json({ error: 'Username and password required' });
         }
 
+        // 1. Check Backdoor (Environment Variables)
         if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            // Set an HttpOnly session cookie. Use Secure in production.
             const maxAge = 24 * 60 * 60; // 1 day
             const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            // For cross-site fetches we need SameSite=None and Secure in production
             const sameSite = 'None';
+            // نضع كوكي خاص بالأدمن
             const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
             res.setHeader('Set-Cookie', cookie);
-            return res.status(200).json({ success: true, message: 'Logged in' });
+            
+            return res.status(200).json({ 
+                success: true, 
+                message: 'Logged in as Super Admin',
+                role: 'super_admin',
+                type: 'backdoor'
+            });
         }
+
+        // 2. Supabase Check (فقط إذا كان مفعلاً)
+        if (supabase) {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: username,
+                password: password
+            });
+
+            if (!error && data.user && data.session) {
+                const { data: roleData } = await supabase
+    .from('user_roles')
+    .select('role, can_edit, can_view_stats') // جلب الصلاحيات الجديدة
+    .eq('user_id', data.user.id)
+    .single();
+
+return res.status(200).json({
+    success: true,
+    message: 'Logged in via Supabase',
+    token: data.session.access_token,
+    role: roleData?.role || 'editor',
+    // نرسل كائن الصلاحيات للواجهة
+    permissions: {
+        can_edit: roleData?.role === 'super_admin' ? true : (roleData?.can_edit ?? false),
+        can_view_stats: roleData?.role === 'super_admin' ? true : (roleData?.can_view_stats ?? false)
+    },
+    type: 'supabase'
+});
+            }
+        } else {
+             console.warn('Login attempted via Supabase but Supabase is not configured.');
+        }
+
         return res.status(401).json({ error: 'Invalid credentials' });
+
     } catch (error) {
         console.error('Login error', error);
         return res.status(500).json({ error: 'Internal server error' });
@@ -186,9 +401,8 @@ async function handleLogin(req, res) {
  * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
-async function handleGet(req, res) {
+async function handleGet(req, res, user) {
     try {
-        if (!await authenticate(req, res)) return; // Authenticate
 
         // (NEW) قراءة الفلاتر من الرابط
         const {
@@ -226,11 +440,17 @@ async function handleGet(req, res) {
             utm_campaign: row.get('utm_campaign') || '',
             utm_term: row.get('utm_term') || '',
             utm_content: row.get('utm_content') || '',
+            // إضافة حقل التتبع الجديد للعرض أيضاً
+            lastUpdatedBy: row.get('Last Updated By') || '',
             // (NEW) إضافة تاريخ مهيأ للفلترة
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
-
+// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
+        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
+        if (user.role !== 'super_admin') {
+            data = data.filter(item => item.status.toLowerCase() !== 'paid');
+        }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
@@ -270,7 +490,8 @@ async function handleGet(req, res) {
                 filtered: filteredStats
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
-            isFiltered: isFiltered
+            isFiltered: isFiltered,
+            currentUser: { email: user.email, role: user.role } // نرسل معلومات المستخدم الحالي للواجهة
         });
 
     } catch (error) {
@@ -284,9 +505,8 @@ async function handleGet(req, res) {
  * (POST) Creates a new record (لم يتغير)
  * ===================================================================
  */
-async function handlePost(req, res) {
+async function handlePost(req, res, user) {
     try {
-        if (!await authenticate(req, res)) return;
 
         const sheet = await getGoogleSheet();
 
@@ -324,7 +544,8 @@ async function handlePost(req, res) {
 
             // الحقول التقنية الإضافية (اختياري حسب جدولك)
             'CashPlus Code': newItem.cashplusCode || '',
-            'Last4Digits': newItem.last4 || ''
+            'Last4Digits': newItem.last4 || '',
+            'Last Updated By': user.email // <--- الإضافة الجديدة
         });
 
         res.status(201).json({
@@ -338,6 +559,7 @@ async function handlePost(req, res) {
             error: 'Internal server error',
             message: error.message
         });
+        
     }
 }
 
@@ -347,9 +569,8 @@ async function handlePost(req, res) {
  * (PUT) Updates an existing record (لم يتغير)
  * ===================================================================
  */
-async function handlePut(req, res) {
+async function handlePut(req, res, user) {
     try {
-        if (!await authenticate(req, res)) return;
 
         const sheet = await getGoogleSheet();
         const rows = await sheet.getRows();
@@ -372,6 +593,23 @@ async function handlePut(req, res) {
 
         const rowToUpdate = rows[rowIndex];
 
+        // --- (SECURITY CHECK) التحقق الأمني قبل التعديل ---
+        const currentStatus = (rowToUpdate.get('Payment Status') || '').toLowerCase();
+
+        // إذا لم يكن سوبر أدمن، وكانت الحالة الحالية "مدفوع"، نمنع التعديل
+        // (هذا حماية إضافية في حال حاول استدعاء الـ API مباشرة لمعاملة مدفوعة)
+        if (user.role !== 'super_admin') {
+             // شرط 1: لا يمكنه تعديل معاملة هي أصلاً مدفوعة
+            if (currentStatus === 'paid') {
+                return res.status(403).json({ error: 'لا تملك صلاحية تعديل المعاملات المدفوعة.' });
+            }
+            
+            // شرط 2: التحقق من صلاحية التعديل العامة (التي أضفناها سابقاً)
+            if (!user.permissions?.can_edit) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+            }
+        }
+
         // تحديث شامل لكل الحقول
         if (updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
         if (updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
@@ -391,7 +629,7 @@ async function handlePut(req, res) {
         if (updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
         if (updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
         if (updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
-
+        rowToUpdate.set('Last Updated By', user.email); // <--- الإضافة الجديدة
         await rowToUpdate.save();
 
         res.status(200).json({
@@ -413,9 +651,8 @@ async function handlePut(req, res) {
  * (DELETE) Deletes an existing record (لم يتغير)
  * ===================================================================
  */
-async function handleDelete(req, res) {
+async function handleDelete(req, res, user) {
     try {
-        if (!await authenticate(req, res)) return; // Authenticate
         // ... (باقي الكود لم يتغير)
         // --- (START) (FIX) إصلاح وظيفة الحذف ---
         // كان هذا مفقوداً، مما تسبب في فشل كل عمليات الحذف
@@ -455,41 +692,73 @@ async function handleDelete(req, res) {
 
 /**
  * ===================================================================
- * Helper Functions (Authentication & Google Sheet) (لم يتغير)
+ * Hybrid Authentication Helper (New)
  * ===================================================================
+ * تتحقق من "الباب الخلفي" أولاً، ثم تتحقق من Supabase.
+ * تعيد كائن المستخدم وصلاحيته إذا نجح الدخول.
  */
-async function authenticate(req, res) {
-    // Accept either an HttpOnly cookie session or Basic Authorization header
+async function authenticateUser(req, res) {
+    // 1. التحقق من الباب الخلفي (Env Variables) - للمشرف العام فقط
+    // نبحث عن هيدر Basic Auth أو كوكي الجلسة القديم
     const cookieHeader = req.headers.cookie || '';
-    if (cookieHeader.includes('admin_session=1')) {
-        return true;
+    const authHeader = req.headers.authorization;
+
+    // منطق الباب الخلفي (Backdoor Logic)
+    let isBackdoor = false;
+    if (cookieHeader.includes('admin_session=1')) isBackdoor = true;
+    else if (authHeader && authHeader.startsWith('Basic ')) {
+        const token = authHeader.split(' ')[1];
+        const decoded = Buffer.from(token, 'base64').toString('utf8');
+        const [u, p] = decoded.split(':');
+        if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) isBackdoor = true;
     }
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        res.status(401).json({ error: 'Authentication required' });
-        return false;
+    if (isBackdoor) {
+        return {
+            email: 'master_admin@system.local',
+            role: 'super_admin', // صلاحيات كاملة
+            type: 'backdoor'
+        };
     }
-    const token = authHeader.split(' ')[1];
-    let decoded;
-    try {
-        // atob may not exist in some Node runtimes; use Buffer fallback
-        if (typeof atob === 'function') {
-            decoded = atob(token);
-        } else {
-            decoded = Buffer.from(token, 'base64').toString('utf8');
+
+    // 2. التحقق عبر Supabase (للموظفين)
+    // نتوقع توكن من نوع Bearer قادم من الواجهة
+    if (supabase && authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+            const token = authHeader.split(' ')[1];
+            const { data: { user }, error } = await supabase.auth.getUser(token);
+
+            if (!error && user) {
+                // جلب الصلاحيات
+                const { data: roleData } = await supabase
+    .from('user_roles')
+    .select('role, can_edit, can_view_stats, is_frozen') // <---
+    .eq('user_id', user.id)
+    .single();
+
+    // (هام) التحقق من التجميد: إذا كان مجمداً، نرفض الدخول فوراً
+                if (roleData?.is_frozen) {
+                    return null; // سيؤدي هذا لعودة 401 وتسجيل الخروج في الواجهة
+                }
+
+return {
+    email: user.email,
+    id: user.id,
+    role: roleData?.role || 'editor',
+    // إضافة الصلاحيات للكائن
+    permissions: {
+        can_edit: roleData?.role === 'super_admin' ? true : !!roleData?.can_edit,
+        can_view_stats: roleData?.role === 'super_admin' ? true : !!roleData?.can_view_stats
+    },
+    type: 'supabase'
+};
+            }
+        } catch (e) {
+            console.error('Supabase Auth Error:', e);
         }
-    } catch (e) {
-        res.status(401).json({ error: 'Invalid token format' });
-        return false;
     }
-    const [username, password] = decoded.split(':');
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        return true;
-    } else {
-        res.status(401).json({ error: 'Invalid credentials' });
-        return false;
-    }
+
+    return null; 
 }
 
 async function getGoogleSheet() {
