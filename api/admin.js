@@ -401,107 +401,119 @@ return res.status(200).json({
  * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
+// متغيرات الكاش (خارج الدالة)
+let cachedData = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 60 * 1000; // دقيقة واحدة
+
 async function handleGet(req, res, user) {
     try {
+        const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
 
-        // (NEW) قراءة الفلاتر من الرابط
-        const {
-            searchTerm,
-            statusFilter,
-            paymentFilter,
-            courseFilter,
-            dateFilter,
-            startDate,
-            endDate
-        } = req.query;
+        // 1. استخدام الكاش لتخفيف الضغط على جوجل
+        const now = Date.now();
+        let data = [];
 
-        const sheet = await getGoogleSheet(); // Connect to sheet
-        const rows = await sheet.getRows();
+        // إذا كان هناك كاش صالح ولم يمر عليه دقيقة، نستخدمه
+        if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
+            console.log('Serving from cache');
+            data = JSON.parse(JSON.stringify(cachedData)); // نسخة عميقة
+        } else {
+            // جلب جديد من جوجل
+            try {
+                const sheet = await getGoogleSheet();
+                const rows = await sheet.getRows();
+                
+                data = rows.map(row => ({
+                    timestamp: row.get('Timestamp') || '',
+                    inquiryId: row.get('Inquiry ID') || '',
+                    customerName: row.get('Full Name') || '',
+                    customerEmail: row.get('Email') || '',
+                    customerPhone: row.get('Phone Number') || '',
+                    course: row.get('Selected Course') || '',
+                    qualification: row.get('Qualification') || '',
+                    experience: row.get('Experience') || '',
+                    status: row.get('Payment Status') || 'pending',
+                    transactionId: row.get('Transaction ID') || '',
+                    paymentMethod: row.get('Payment Method') || '',
+                    cashplusCode: row.get('CashPlus Code') || '',
+                    last4: row.get('Last4Digits') || '',
+                    finalAmount: row.get('Amount') || 0,
+                    currency: row.get('Currency') || 'MAD',
+                    language: row.get('Lang') || 'ar',
+                    utm_source: row.get('utm_source') || '',
+                    utm_medium: row.get('utm_medium') || '',
+                    utm_campaign: row.get('utm_campaign') || '',
+                    utm_term: row.get('utm_term') || '',
+                    utm_content: row.get('utm_content') || '',
+                    lastUpdatedBy: row.get('Last Updated By') || '',
+                    parsedDate: parseDate(row.get('Timestamp') || ''),
+                    normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
+                }));
 
-        let data = rows.map(row => ({  // <--- تغيير const إلى let
-            timestamp: row.get('Timestamp') || '',
-            inquiryId: row.get('Inquiry ID') || '',
-            customerName: row.get('Full Name') || '',
-            customerEmail: row.get('Email') || '',
-            customerPhone: row.get('Phone Number') || '',
-            course: row.get('Selected Course') || '',
-            qualification: row.get('Qualification') || '',
-            experience: row.get('Experience') || '',
-            status: row.get('Payment Status') || 'pending',
-            transactionId: row.get('Transaction ID') || '',
-            paymentMethod: row.get('Payment Method') || '',
-            cashplusCode: row.get('CashPlus Code') || '',
-            last4: row.get('Last4Digits') || '',
-            finalAmount: row.get('Amount') || 0,
-            currency: row.get('Currency') || 'MAD',
-            language: row.get('Lang') || 'ar',
-            utm_source: row.get('utm_source') || '',
-            utm_medium: row.get('utm_medium') || '',
-            utm_campaign: row.get('utm_campaign') || '',
-            utm_term: row.get('utm_term') || '',
-            utm_content: row.get('utm_content') || '',
-            // إضافة حقل التتبع الجديد للعرض أيضاً
-            lastUpdatedBy: row.get('Last Updated By') || '',
-            // (NEW) إضافة تاريخ مهيأ للفلترة
-            parsedDate: parseDate(row.get('Timestamp') || ''),
-            normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
-        }));
-// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
-        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
+                // تحديث الكاش
+                cachedData = data;
+                lastFetchTime = now;
+
+            } catch (googleError) {
+                // إذا فشل جوجل (بسبب الضغط 429)، نستخدم الكاش القديم إن وجد
+                console.error('Google Sheet Error:', googleError.message);
+                if (cachedData) {
+                    console.warn('Returning stale cache due to Google API error');
+                    data = JSON.parse(JSON.stringify(cachedData));
+                } else {
+                    // إذا لم يوجد كاش، نلقي الخطأ ليتم التعامل معه
+                    throw googleError; 
+                }
+            }
+        }
+
+        // 2. الفلتر الأمني (للمحررين)
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
-        // --- (NEW) منطق الفلترة والحساب المركزي ---
 
-        // 1. حساب الإحصائيات الإجمالية (دائماً)
+        // 3. الحسابات والفلترة
         const overallStats = calculateStatistics(data);
-
-        // 2. التحقق إذا كانت هناك فلاتر نشطة
         const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
 
         let filteredData = data;
         let filteredStats = overallStats;
 
         if (isFiltered) {
-            // 3. تطبيق الفلاتر
             filteredData = data.filter(item => {
                 const search = searchTerm ? searchTerm.toLowerCase() : '';
-                const matchesSearch = !search ||
-                    Object.values(item).some(val =>
-                        String(val).toLowerCase().includes(search)
-                    );
+                const matchesSearch = !search || Object.values(item).some(val => String(val).toLowerCase().includes(search));
                 const matchesStatus = !statusFilter || item.status === statusFilter;
                 const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
                 const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
                 const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
-
                 return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
             });
-
-            // 4. حساب الإحصائيات المفلترة
             filteredStats = calculateStatistics(filteredData);
         }
 
-        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات
+        // 4. إرسال الاستجابة (JSON سليم دائماً)
         res.status(200).json({
             success: true,
-            statistics: {
-                overall: overallStats,
-                filtered: filteredStats
-            },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
+            statistics: { overall: overallStats, filtered: filteredStats },
+            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
             isFiltered: isFiltered,
-// داخل res.status(200).json({ ... })
-currentUser: { 
-    email: user.email, 
-    role: user.role,
-    // الإضافة الجديدة: نرسل الصلاحيات الحية من قاعدة البيانات
-    permissions: user.permissions 
-}        });
+            currentUser: { 
+                email: user.email, 
+                role: user.role,
+                permissions: user.permissions 
+            } 
+        });
 
     } catch (error) {
-        console.error('Admin GET API Error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Admin GET API Critical Error:', error);
+        // إرجاع JSON خطأ بدلاً من HTML أو نص عادي لتجنب خطأ "undefined is not valid JSON"
+        res.status(500).json({ 
+            error: error.message || 'Internal Server Error', 
+            success: false,
+            data: [] // إرجاع مصفوفة فارغة لتجنب كسر الجدول
+        });
     }
 }
 
@@ -512,7 +524,7 @@ currentUser: {
  */
 async function handlePost(req, res, user) {
     try {
-
+        cachedData = null; // <--- مسح الكاش لإجبار التحديث في الطلب القادم
         const sheet = await getGoogleSheet();
 
         const newItem = req.body;
