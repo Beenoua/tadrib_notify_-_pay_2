@@ -1,29 +1,14 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { createClient } from '@supabase/supabase-js';
+// ملاحظة: تأكد من أن ملف utils.js موجود إذا كنت تستخدمه
+// import { validateRequired, validateEmail } from './utils.js'; 
 
 // Simple authentication
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'tadrib2024';
 
-// إعدادات Supabase
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; 
-
-let supabase = null;
-
-if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
-    try {
-        supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-            auth: { autoRefreshToken: false, persistSession: false }
-        });
-    } catch (error) {
-        console.warn('Supabase initialization failed:', error.message);
-    }
-}
-
 // ===================================================================
-// Helper Functions
+// (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
 // ===================================================================
 
 function parseDate(ts) {
@@ -42,7 +27,7 @@ function parseDate(ts) {
 
 function checkDateFilter(item, filterValue, customStart, customEnd) {
     if (!filterValue || filterValue === 'all') { return true; }
-    const itemDate = item.parsedDate;
+    const itemDate = item.parsedDate; // (تعديل) نفترض أن item.parsedDate موجود
     if (!itemDate) { return false; }
 
     const now = new Date();
@@ -115,214 +100,111 @@ function calculateStatistics(dataArray) {
     return stats;
 }
 
-// ===================================================================
-// User Management Handlers
-// ===================================================================
 
-async function handleGetUsers(res) {
-    const { data: { users }, error } = await supabase.auth.admin.listUsers();
-    if (error) throw error;
-
-    const { data: rolesData } = await supabase
-        .from('user_roles')
-        .select('user_id, role, is_frozen, can_edit, can_view_stats');
-
-    const rolesMap = {};
-    if (rolesData) rolesData.forEach(r => rolesMap[r.user_id] = r);
-
-    const usersList = users.map(u => {
-        const r = rolesMap[u.id] || {};
-        return {
-            id: u.id,
-            email: u.email,
-            created_at: u.created_at,
-            role: r.role || 'editor',
-            is_frozen: !!r.is_frozen,
-            can_edit: !!r.can_edit,
-            can_view_stats: !!r.can_view_stats
-        };
-    });
-
-    return res.status(200).json({ success: true, data: usersList });
-}
-
-async function handleUpdateUser(req, res) {
-    const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
-    if (!userId) return res.status(400).json({ error: 'User ID is required' });
-
-    const { error } = await supabase
-        .from('user_roles')
-        .update({ 
-            role: role,
-            can_edit: role === 'super_admin' ? true : can_edit,
-            can_view_stats: role === 'super_admin' ? true : can_view_stats,
-            is_frozen: is_frozen
-        })
-        .eq('user_id', userId);
-
-    if (error) throw error;
-    return res.status(200).json({ success: true, message: 'User updated successfully' });
-}
-
-async function handleAddUser(req, res) {
-    const { email, password, role, can_edit, can_view_stats } = req.body;
-
-    const { data: userData, error: createError } = await supabase.auth.admin.createUser({
-        email: email, password: password, email_confirm: true
-    });
-
-    if (createError) throw createError;
-
-    if (userData.user) {
-        const { error: roleError } = await supabase
-            .from('user_roles')
-            .insert([{ 
-                user_id: userData.user.id, 
-                role: role, 
-                email: email,
-                can_edit: role === 'super_admin' ? true : (can_edit || false),
-                can_view_stats: role === 'super_admin' ? true : (can_view_stats || false)
-            }]);        
-        if (roleError) {
-            await supabase.auth.admin.deleteUser(userData.user.id);
-            throw roleError;
-        }
-    }
-    return res.status(201).json({ success: true, message: 'User created successfully' });
-}
-
-async function handleDeleteUser(req, res) {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'User ID required' });
-
-    const { error } = await supabase.auth.admin.deleteUser(userId);
-    if (error) throw error;
-
-    return res.status(200).json({ success: true, message: 'User deleted' });
-}
-
-async function handleChangePassword(req, res, currentUser) {
-    const { newPassword, userId } = req.body;
-    const targetId = (currentUser.role === 'super_admin' && userId) ? userId : currentUser.id;
-
-    const { error } = await supabase.auth.admin.updateUserById(targetId, { password: newPassword });
-
-    if (error) throw error;
-    return res.status(200).json({ success: true, message: 'Password updated' });
-}
-
-// ===================================================================
-// Main Handler
-// ===================================================================
+/**
+ * ===================================================================
+ * Main Handler (Routes requests)
+ * ===================================================================
+ */
 export default async function handler(req, res) {
+    // CORS: allow the requesting origin and support credentials (cookies)
     const origin = req.headers.origin || '*';
+    // When using credentials, Access-Control-Allow-Origin must be explicit (cannot be '*')
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-    if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+    // Handle preflight requests (ensure credentials header present)
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
 
-    try {
-        const { action } = req.query || {}; 
-
-        if (action === 'login' || (req.method === 'POST' && req.body?.username && !req.headers.authorization)) {
-            return handleLogin(req, res);
-        }
-        if (action === 'logout' || req.url.includes('/logout')) {
-            return handleLogout(req, res);
-        }
-
-        const user = await authenticateUser(req, res);
-        if (!user) {
-            return res.status(401).json({ error: 'Unauthorized access' });
-        }
-
-        if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {            
-            if (user.role !== 'super_admin' && action !== 'change_password') {
-                 return res.status(403).json({ error: 'Forbidden: Admins only' });
+    // Handle different HTTP methods and a special /login POST route
+    if (req.method === 'GET') {
+        return handleGet(req, res);
+    } else if (req.method === 'POST') {
+        // Support login/logout both when requests are targeted to /api/admin
+        // (Some platforms route /api/admin/login -> 404). Detect login by body fields.
+        try {
+            // If body contains username+password, treat as login request
+            if (req.body && req.body.username && req.body.password) {
+                return handleLogin(req, res);
             }
-            if (action === 'get_users') return handleGetUsers(res);
-            if (action === 'add_user') return handleAddUser(req, res);
-            if (action === 'delete_user') return handleDeleteUser(req, res);
-            if (action === 'change_password') return handleChangePassword(req, res, user);
-            if (action === 'update_user') return handleUpdateUser(req, res);
-        }
-
-        if (req.method === 'GET') return handleGet(req, res, user);
-        else if (req.method === 'POST') return handlePost(req, res, user);
-        else if (req.method === 'PUT') {
-            if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
-                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+            const urlPath = req.url || '';
+            if (urlPath.includes('/login')) {
+                return handleLogin(req, res);
             }
-            return handlePut(req, res, user);
-        } else if (req.method === 'DELETE') {
-            if (user.role !== 'super_admin') { 
-                 return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
+            if (urlPath.includes('/logout')) {
+                return handleLogout(req, res);
             }
-            return handleDelete(req, res, user);
-        } else {
-            return res.status(405).json({ error: 'Method not allowed' });
+        } catch (e) {
+            // ignore and proceed to normal POST handling
         }
-
-    } catch (error) {
-        console.error('Handler Error:', error);
-        return res.status(500).json({ error: error.message || 'Internal Server Error' });
+        return handlePost(req, res);
+    } else if (req.method === 'PUT') {
+        return handlePut(req, res);
+    } else if (req.method === 'DELETE') {
+        return handleDelete(req, res);
+    } else {
+        return res.status(405).json({ error: 'Method not allowed' });
     }
 }
 
+/**
+ * ===================================================================
+ * (POST) Login - sets an HttpOnly cookie for session-based auth
+ * ===================================================================
+ */
 async function handleLogin(req, res) {
     try {
         const { username, password } = req.body || {};
-        if (!username || !password) return res.status(400).json({ error: 'Required fields missing' });
-
-        // Backdoor
-        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            const maxAge = 24 * 60 * 60;
-            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-            res.setHeader('Set-Cookie', `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=None${secureFlag}`);
-            return res.status(200).json({ success: true, role: 'super_admin', type: 'backdoor' });
+        if (!username || !password) {
+            return res.status(400).json({ error: 'username and password required' });
         }
 
-        // Supabase
-        if (supabase) {
-            const { data, error } = await supabase.auth.signInWithPassword({ email: username, password: password });
-            if (!error && data.user) {
-                const { data: roleData } = await supabase
-                    .from('user_roles')
-                    .select('role, can_edit, can_view_stats, is_frozen')
-                    .eq('user_id', data.user.id)
-                    .single();
-                
-                if (roleData?.is_frozen) return res.status(401).json({ error: 'الحساب مجمد' });
-
-                return res.status(200).json({
-                    success: true,
-                    token: data.session.access_token,
-                    role: roleData?.role || 'editor',
-                    permissions: {
-                        can_edit: roleData?.role === 'super_admin' ? true : (roleData?.can_edit ?? false),
-                        can_view_stats: roleData?.role === 'super_admin' ? true : (roleData?.can_view_stats ?? false)
-                    },
-                    type: 'supabase'
-                });
-            }
+        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+            // Set an HttpOnly session cookie. Use Secure in production.
+            const maxAge = 24 * 60 * 60; // 1 day
+            const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+            // For cross-site fetches we need SameSite=None and Secure in production
+            const sameSite = 'None';
+            const cookie = `admin_session=1; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=${sameSite}${secureFlag}`;
+            res.setHeader('Set-Cookie', cookie);
+            return res.status(200).json({ success: true, message: 'Logged in' });
         }
         return res.status(401).json({ error: 'Invalid credentials' });
     } catch (error) {
-        return res.status(500).json({ error: error.message });
+        console.error('Login error', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-async function handleGet(req, res, user) {
+/**
+ * ===================================================================
+ * (GET) Fetches records and statistics (MODIFIED)
+ * ===================================================================
+ */
+async function handleGet(req, res) {
     try {
-        const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
+        if (!await authenticate(req, res)) return; // Authenticate
 
-        const sheet = await getGoogleSheet();
+        // (NEW) قراءة الفلاتر من الرابط
+        const {
+            searchTerm,
+            statusFilter,
+            paymentFilter,
+            courseFilter,
+            dateFilter,
+            startDate,
+            endDate
+        } = req.query;
+
+        const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
-        // (إصلاح 1: استخدام let بدلاً من const)
-        let data = rows.map(row => ({
+        const data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
             inquiryId: row.get('Inquiry ID') || '',
             customerName: row.get('Full Name') || '',
@@ -342,110 +224,155 @@ async function handleGet(req, res, user) {
             utm_source: row.get('utm_source') || '',
             utm_medium: row.get('utm_medium') || '',
             utm_campaign: row.get('utm_campaign') || '',
+            utm_term: row.get('utm_term') || '',
             utm_content: row.get('utm_content') || '',
-            lastUpdatedBy: row.get('Last Updated By') || '',
+            // (NEW) إضافة تاريخ مهيأ للفلترة
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
 
-        // الفلتر الأمني
-        if (user.role !== 'super_admin') {
-            data = data.filter(item => item.status.toLowerCase() !== 'paid');
-        }
+        // --- (NEW) منطق الفلترة والحساب المركزي ---
 
+        // 1. حساب الإحصائيات الإجمالية (دائماً)
         const overallStats = calculateStatistics(data);
+
+        // 2. التحقق إذا كانت هناك فلاتر نشطة
         const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
 
         let filteredData = data;
         let filteredStats = overallStats;
 
         if (isFiltered) {
+            // 3. تطبيق الفلاتر
             filteredData = data.filter(item => {
                 const search = searchTerm ? searchTerm.toLowerCase() : '';
-                const matchesSearch = !search || Object.values(item).some(val => String(val).toLowerCase().includes(search));
+                const matchesSearch = !search ||
+                    Object.values(item).some(val =>
+                        String(val).toLowerCase().includes(search)
+                    );
                 const matchesStatus = !statusFilter || item.status === statusFilter;
                 const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
                 const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
                 const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
+
                 return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
             });
+
+            // 4. حساب الإحصائيات المفلترة
             filteredStats = calculateStatistics(filteredData);
         }
 
+        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات
         res.status(200).json({
             success: true,
-            statistics: { overall: overallStats, filtered: filteredStats },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
-            isFiltered: isFiltered,
-            // (إصلاح 2: إرسال الصلاحيات المحدثة مع كل طلب)
-            currentUser: { 
-                email: user.email, 
-                role: user.role,
-                permissions: user.permissions // <--- هذا هو المفتاح للتزامن الفوري
-            } 
+            statistics: {
+                overall: overallStats,
+                filtered: filteredStats
+            },
+            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
+            isFiltered: isFiltered
         });
 
     } catch (error) {
         console.error('Admin GET API Error:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-// ... (handlePost, handlePut, handleDelete, authenticateUser, getGoogleSheet, handleLogout, parseDate, normalizeCourseName - بقية الدوال تبقى كما هي أو كما صححناها سابقاً)
-async function handlePost(req, res, user) {
+/**
+ * ===================================================================
+ * (POST) Creates a new record (لم يتغير)
+ * ===================================================================
+ */
+async function handlePost(req, res) {
     try {
+        if (!await authenticate(req, res)) return;
+
         const sheet = await getGoogleSheet();
+
         const newItem = req.body;
+
+        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
         await sheet.addRow({
             'Timestamp': new Date().toISOString(),
             'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
             'Phone Number': newItem.customerPhone,
+
+            // الحقول التي كانت مفقودة
             'Selected Course': newItem.course,
             'Qualification': newItem.qualification || 'Not Specified',
             'Experience': newItem.experience || 'Not Specified',
+
             'Payment Status': newItem.status,
             'Payment Method': newItem.paymentMethod,
+
+            // الربط الصحيح لرقم المعاملة والعملة
             'Transaction ID': newItem.transactionId || '',
-            'Currency': 'MAD', 
+            'Currency': 'MAD', // قيمة ثابتة دائماً
             'Amount': newItem.finalAmount,
+
             'Lang': newItem.language,
+
+            // كل حقول UTM
             'utm_source': newItem.utm_source || 'manual_entry',
             'utm_medium': newItem.utm_medium || '',
             'utm_campaign': newItem.utm_campaign || '',
             'utm_term': newItem.utm_term || '',
             'utm_content': newItem.utm_content || '',
+
+            // الحقول التقنية الإضافية (اختياري حسب جدولك)
             'CashPlus Code': newItem.cashplusCode || '',
-            'Last4Digits': newItem.last4 || '',
-            'Last Updated By': user.email 
+            'Last4Digits': newItem.last4 || ''
         });
-        res.status(201).json({ success: true });
+
+        res.status(201).json({
+            success: true,
+            message: 'Record created successfully'
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Admin POST API Error:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: error.message
+        });
     }
 }
 
-async function handlePut(req, res, user) {
+
+/**
+ * ===================================================================
+ * (PUT) Updates an existing record (لم يتغير)
+ * ===================================================================
+ */
+async function handlePut(req, res) {
     try {
+        if (!await authenticate(req, res)) return;
+
         const sheet = await getGoogleSheet();
         const rows = await sheet.getRows();
+
         const updatedItem = req.body;
-        const id = updatedItem.originalInquiryId;
+        const id = updatedItem.originalInquiryId; // نستخدم المعرف الأصلي للبحث
 
-        if (!id) return res.status(400).json({ error: 'ID required' });
-
-        const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
-        if (rowIndex === -1) return res.status(404).json({ error: 'Not found' });
-
-        const rowToUpdate = rows[rowIndex];
-        const currentStatus = (rowToUpdate.get('Payment Status') || '').toLowerCase();
-
-        if (user.role !== 'super_admin') {
-            if (currentStatus === 'paid') return res.status(403).json({ error: 'لا تملك صلاحية تعديل المعاملات المدفوعة.' });
-            if (!user.permissions?.can_edit) return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+        if (!id) {
+            return res.status(400).json({ error: 'ID is required for update' });
         }
 
+        // البحث عن الصف
+        const rowIndex = rows.findIndex(row =>
+            row.get('Inquiry ID') === id || row.get('Transaction ID') === id
+        );
+
+        if (rowIndex === -1) {
+            return res.status(404).json({ error: 'Record not found' });
+        }
+
+        const rowToUpdate = rows[rowIndex];
+
+        // تحديث شامل لكل الحقول
         if (updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
         if (updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
         if (updatedItem.customerPhone) rowToUpdate.set('Phone Number', updatedItem.customerPhone);
@@ -457,106 +384,186 @@ async function handlePut(req, res, user) {
         if (updatedItem.finalAmount) rowToUpdate.set('Amount', updatedItem.finalAmount);
         if (updatedItem.transactionId) rowToUpdate.set('Transaction ID', updatedItem.transactionId);
         if (updatedItem.language) rowToUpdate.set('Lang', updatedItem.language);
+
+        // تحديث UTMs
         if (updatedItem.utm_source) rowToUpdate.set('utm_source', updatedItem.utm_source);
         if (updatedItem.utm_medium) rowToUpdate.set('utm_medium', updatedItem.utm_medium);
         if (updatedItem.utm_campaign) rowToUpdate.set('utm_campaign', updatedItem.utm_campaign);
+        if (updatedItem.utm_term) rowToUpdate.set('utm_term', updatedItem.utm_term);
         if (updatedItem.utm_content) rowToUpdate.set('utm_content', updatedItem.utm_content);
-        rowToUpdate.set('Last Updated By', user.email);
 
         await rowToUpdate.save();
-        res.status(200).json({ success: true });
+
+        res.status(200).json({
+            success: true,
+            message: 'Record updated successfully'
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Admin PUT API Error:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            message: error.message
+        });
     }
 }
 
-async function handleDelete(req, res, user) {
+/**
+ * ===================================================================
+ * (DELETE) Deletes an existing record (لم يتغير)
+ * ===================================================================
+ */
+async function handleDelete(req, res) {
     try {
+        if (!await authenticate(req, res)) return; // Authenticate
+        // ... (باقي الكود لم يتغير)
+        // --- (START) (FIX) إصلاح وظيفة الحذف ---
+        // كان هذا مفقوداً، مما تسبب في فشل كل عمليات الحذف
         const { id } = req.body;
-        if (!id) return res.status(400).json({ error: 'ID required' });
 
-        const sheet = await getGoogleSheet(); 
+        if (!id) {
+            return res.status(400).json({ error: 'ID is required' });
+        }
+        // --- (END) (FIX) ---
+
+        const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
-        const rowIndex = rows.findIndex(row => row.get('Inquiry ID') === id || row.get('Transaction ID') === id);
 
-        if (rowIndex === -1) return res.status(404).json({ error: 'Not found' });
+        // Find the row with matching id (inquiryId or transactionId)
+        const rowIndex = rows.findIndex(row =>
+            row.get('Inquiry ID') === id || row.get('Transaction ID') === id
+        );
 
+        if (rowIndex === -1) {
+            return res.status(404).json({ error: 'Record not found' });
+        }
+
+        // Delete the row
         await rows[rowIndex].delete();
-        res.status(200).json({ success: true });
+
+        res.status(200).json({
+            success: true,
+            message: 'Record deleted successfully'
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Admin DELETE API Error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-async function authenticateUser(req, res) {
+
+/**
+ * ===================================================================
+ * Helper Functions (Authentication & Google Sheet) (لم يتغير)
+ * ===================================================================
+ */
+async function authenticate(req, res) {
+    // Accept either an HttpOnly cookie session or Basic Authorization header
     const cookieHeader = req.headers.cookie || '';
+    if (cookieHeader.includes('admin_session=1')) {
+        return true;
+    }
+
     const authHeader = req.headers.authorization;
-
-    // Backdoor
-    if (cookieHeader.includes('admin_session=1')) return { email: 'master_admin@system.local', role: 'super_admin', type: 'backdoor' };
-    if (authHeader && authHeader.startsWith('Basic ')) {
-        const token = authHeader.split(' ')[1];
-        const decoded = Buffer.from(token, 'base64').toString('utf8');
-        const [u, p] = decoded.split(':');
-        if (u === ADMIN_USERNAME && p === ADMIN_PASSWORD) return { email: 'master_admin@system.local', role: 'super_admin', type: 'backdoor' };
+    if (!authHeader) {
+        res.status(401).json({ error: 'Authentication required' });
+        return false;
     }
-
-    // Supabase
-    if (supabase && authHeader && authHeader.startsWith('Bearer ')) {
-        try {
-            const token = authHeader.split(' ')[1];
-            const { data: { user }, error } = await supabase.auth.getUser(token);
-
-            if (!error && user) {
-                const { data: roleData } = await supabase
-                    .from('user_roles')
-                    .select('role, can_edit, can_view_stats, is_frozen')
-                    .eq('user_id', user.id)
-                    .single();
-
-                if (roleData?.is_frozen) return null; // Frozen -> 401
-
-                return {
-                    email: user.email,
-                    id: user.id,
-                    role: roleData?.role || 'editor',
-                    permissions: {
-                        can_edit: roleData?.role === 'super_admin' ? true : !!roleData?.can_edit,
-                        can_view_stats: roleData?.role === 'super_admin' ? true : !!roleData?.can_view_stats
-                    },
-                    type: 'supabase'
-                };
-            }
-        } catch (e) { console.error('Supabase Auth Error:', e); }
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+        // atob may not exist in some Node runtimes; use Buffer fallback
+        if (typeof atob === 'function') {
+            decoded = atob(token);
+        } else {
+            decoded = Buffer.from(token, 'base64').toString('utf8');
+        }
+    } catch (e) {
+        res.status(401).json({ error: 'Invalid token format' });
+        return false;
     }
-    return null; 
+    const [username, password] = decoded.split(':');
+    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+        return true;
+    } else {
+        res.status(401).json({ error: 'Invalid credentials' });
+        return false;
+    }
 }
 
 async function getGoogleSheet() {
+    // ... (باقي الكود لم يتغير)
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    // (FIX) إصلاح قراءة المفتاح الخاص
     const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
-    if (!spreadsheetId || !serviceAccountEmail || !privateKey) throw new Error('Missing Google Sheets credentials');
+    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+        throw new Error('Missing Google Sheets credentials in environment variables');
+    }
 
-    const serviceAccountAuth = new JWT({ email: serviceAccountEmail, key: privateKey, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
     const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
     await doc.loadInfo();
-    return doc.sheetsByTitle["Leads"] || doc.sheetsByIndex[0];
+
+    let sheet = doc.sheetsByTitle["Leads"];
+    if (!sheet) {
+        sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
+    }
+    if (!sheet) {
+        throw new Error('No sheets found in the spreadsheet');
+    }
+
+    return sheet;
 }
 
+/**
+ * ===================================================================
+ * (POST) Logout - clears the session cookie
+ * ===================================================================
+ */
 async function handleLogout(req, res) {
-    const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-    res.setHeader('Set-Cookie', `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=None${secureFlag}`);
-    return res.status(200).json({ success: true });
+    try {
+        // Clear cookie by setting Max-Age=0
+        const secureFlag = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+        const sameSite = 'None';
+        const cookie = `admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=${sameSite}${secureFlag}`;
+        res.setHeader('Set-Cookie', cookie);
+        return res.status(200).json({ success: true, message: 'Logged out' });
+    } catch (error) {
+        console.error('Logout error', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
 }
+
+// Normalize course names to shortcodes (same mapping as frontend)
+const COURSE_DEFINITIONS = {
+    'PMP': ['Gestion de Projet Professionnelle (PMP®)', 'Professional Project Management (PMP®)', 'الإدارة الاحترافية للمشاريع (PMP®)'],
+    'Planning': ['Préparation et Planification de Chantier', 'Site Preparation and Planning', 'إعداد وتخطيط المواقع'],
+    'QSE': ['Normes QSE en Chantier', 'QSE Standards on Sites', 'معايير QSE في المواقع'],
+    'Soft Skills': ['Soft Skills pour Managers', 'Soft Skills for Managers', 'المهارات الناعمة للمديرين']
+};
 
 function normalizeCourseName(raw) {
     if (!raw) return 'دورات أخرى';
-    const trimmed = String(raw).trim().toLowerCase();
-    if (trimmed.includes('pmp')) return 'PMP';
-    if (trimmed.includes('planning')) return 'Planning';
-    if (trimmed.includes('qse')) return 'QSE';
-    if (trimmed.includes('softskills') || trimmed.includes('soft skills')) return 'Soft Skills';
+    const trimmed = String(raw).trim();
+    if (trimmed === '' || trimmed.toLowerCase() === 'n/a') return 'غير محدد';
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('pmp')) return 'PMP';
+    if (lower.includes('planning')) return 'Planning';
+    if (lower.includes('qse')) return 'QSE';
+    if (lower.includes('softskills') || lower.includes('soft skills')) return 'Soft Skills';
+    // match translations
+    for (const shortcode in COURSE_DEFINITIONS) {
+        for (const t of COURSE_DEFINITIONS[shortcode]) {
+            if (t && typeof t === 'string' && t.trim().toLowerCase() === trimmed.toLowerCase()) return shortcode;
+        }
+    }
     return 'دورات أخرى';
 }
