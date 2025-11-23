@@ -404,7 +404,7 @@ return res.status(200).json({
 // متغيرات الكاش (تأكد من وجودها في أعلى الملف)
 let cachedData = null;
 let lastFetchTime = 0;
-const CACHE_DURATION = 0;
+const CACHE_DURATION = 60 * 1000; // دقيقة واحدة
 
 async function handleGet(req, res, user) {
     try {
@@ -414,14 +414,14 @@ async function handleGet(req, res, user) {
         let data = [];
         let servedFromCache = false;
 
-        // 1. محاولة القراءة من الكاش أولاً
+        // 1. محاولة استخدام الكاش
         if (cachedData && Array.isArray(cachedData) && (now - lastFetchTime < CACHE_DURATION)) {
-            console.log('Serving from cache (Valid)');
+            console.log('Serving from cache');
             data = JSON.parse(JSON.stringify(cachedData));
             servedFromCache = true;
         }
 
-        // 2. إذا لم نأخذ من الكاش، نحاول الاتصال بجوجل
+        // 2. جلب بيانات جديدة إذا لم نستخدم الكاش
         if (!servedFromCache) {
             try {
                 const sheet = await getGoogleSheet();
@@ -450,73 +450,43 @@ async function handleGet(req, res, user) {
                     utm_term: row.get('utm_term') || '',
                     utm_content: row.get('utm_content') || '',
                     lastUpdatedBy: row.get('Last Updated By') || '',
-                    parsedDate: parseDate(row.get('Timestamp') || '') 
+                    // نرسل التاريخ كنص كما هو، وندع المتصفح يعالجه
+                    // parsedDate: ... (تمت إزالته من السيرفر لتخفيف الحمل ومنع الارتباك)
                 }));
 
-                // تحديث الكاش بالبيانات الجديدة
+                // تحديث الكاش
                 cachedData = data; 
                 lastFetchTime = now;
 
             } catch (googleError) {
                 console.error('Google API Error:', googleError.message);
-
-                // --- (الحل الحاسم هنا) ---
-                // إذا كان لدينا كاش قديم (حتى لو انتهت مدته)، نستخدمه بدلاً من الفشل
+                // استخدام الكاش القديم عند الطوارئ (تجاوز الكوتا)
                 if (cachedData && Array.isArray(cachedData)) {
-                    console.warn('Returning STALE cache due to Google API error');
+                    console.warn('Returning STALE cache due to error');
                     data = JSON.parse(JSON.stringify(cachedData));
                 } else {
-                    // إذا لم يوجد كاش، نعيد مصفوفة فارغة لتجنب انهيار الواجهة
-                    console.warn('No cache available. Returning empty array to prevent crash.');
-                    data = []; 
+                    // إعادة مصفوفة فارغة أفضل من الانهيار
+                    data = [];
                 }
             }
         }
 
-        // 3. الفلتر الأمني (كما هو)
+        // 3. الفلتر الأمني
         if (user.role !== 'super_admin') {
-            data = data.filter(item => item.status.toLowerCase() !== 'paid');
+            data = data.filter(item => (item.status || '').toLowerCase() !== 'paid');
         }
 
-        // إصلاح التواريخ
-        data.forEach(item => {
-            if (item.parsedDate && typeof item.parsedDate === 'string') {
-                item.parsedDate = new Date(item.parsedDate);
-            }
-        });
+        // ملاحظة: قمنا بنقل منطق الفلترة والترتيب المعقد إلى المتصفح (Client-Side)
+        // كما كان في الملفات القديمة، لتخفيف الضغط عن السيرفر وتسريع الاستجابة.
+        // السيرفر الآن يرسل البيانات الخام (Raw Data) + الإحصائيات فقط.
 
-        // 4. الحسابات والفلترة
+        // 4. حساب الإحصائيات (اختياري، يمكن للمتصفح فعل ذلك أيضاً لكن لا بأس بوجوده)
         const overallStats = calculateStatistics(data);
-        const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
-
-        let filteredData = data;
-        let filteredStats = overallStats;
-
-        if (isFiltered) {
-            filteredData = data.filter(item => {
-                const search = searchTerm ? searchTerm.toLowerCase() : '';
-                const matchesSearch = !search || Object.values(item).some(val => String(val).toLowerCase().includes(search));
-                const matchesStatus = !statusFilter || item.status === statusFilter;
-                const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
-                const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
-                const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
-                return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
-            });
-            filteredStats = calculateStatistics(filteredData);
-        }
-
-        // الترتيب
-        const sortedData = filteredData.sort((a, b) => {
-            const dateA = a.parsedDate ? a.parsedDate.getTime() : 0;
-            const dateB = b.parsedDate ? b.parsedDate.getTime() : 0;
-            return dateB - dateA;
-        });
 
         res.status(200).json({
             success: true,
-            statistics: { overall: overallStats, filtered: filteredStats },
-            data: sortedData,
-            isFiltered: isFiltered,
+            statistics: { overall: overallStats, filtered: overallStats }, // نرسل الإجمالي فقط والسيرفر سيحسب الباقي
+            data: data,
             currentUser: { 
                 email: user.email, 
                 role: user.role,
@@ -525,14 +495,8 @@ async function handleGet(req, res, user) {
         });
 
     } catch (error) {
-        console.error('Handler Critical Error:', error);
-        // حتى في أسوأ الحالات، نعيد JSON صالح
-        res.status(200).json({ 
-            success: false,
-            error: 'System under high load, please try again later.',
-            data: [],
-            statistics: { overall: {}, filtered: {} }
-        });
+        console.error('Critical Error:', error);
+        res.status(200).json({ success: false, data: [], error: error.message });
     }
 }
 
