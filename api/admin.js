@@ -130,58 +130,22 @@ function calculateStatistics(dataArray) {
 
 // جلب قائمة المستخدمين
 async function handleGetUsers(res) {
-    // 1. جلب المستخدمين من Auth
+    // نجلب المستخدمين من Auth وتفاصيلهم من جدول الأدوار
+    // ملاحظة: listUsers تحتاج صلاحيات service_role
     const { data: { users }, error } = await supabase.auth.admin.listUsers();
+    
     if (error) throw error;
 
-    // 2. جلب تفاصيل الأدوار (Roles & Frozen Status) لجميع المستخدمين
-    const { data: rolesData } = await supabase
-        .from('user_roles')
-        .select('user_id, role, is_frozen, can_edit, can_view_stats');
-
-    // تحويل المصفوفة إلى Map لسهولة البحث
-    const rolesMap = {};
-    if (rolesData) {
-        rolesData.forEach(r => rolesMap[r.user_id] = r);
-    }
-
-    // 3. دمج البيانات
-    const usersList = users.map(u => {
-        const r = rolesMap[u.id] || {};
-        return {
-            id: u.id,
-            email: u.email,
-            created_at: u.created_at,
-            role: r.role || 'editor',
-            is_frozen: !!r.is_frozen,
-            can_edit: !!r.can_edit,
-            can_view_stats: !!r.can_view_stats
-        };
-    });
+    // تحضير البيانات للعرض
+    const usersList = users.map(u => ({
+        id: u.id,
+        email: u.email,
+        last_sign_in: u.last_sign_in_at,
+        created_at: u.created_at
+        // يمكن دمج الدور هنا باستعلام إضافي إذا لزم الأمر
+    }));
 
     return res.status(200).json({ success: true, data: usersList });
-}
-
-// تحديث بيانات الموظف (صلاحيات + تجميد)
-async function handleUpdateUser(req, res) {
-    const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
-
-    if (!userId) return res.status(400).json({ error: 'User ID is required' });
-
-    // تحديث جدول user_roles
-    const { error } = await supabase
-        .from('user_roles')
-        .update({ 
-            role: role,
-            can_edit: role === 'super_admin' ? true : can_edit,
-            can_view_stats: role === 'super_admin' ? true : can_view_stats,
-            is_frozen: is_frozen // تحديث حالة التجميد
-        })
-        .eq('user_id', userId);
-
-    if (error) throw error;
-
-    return res.status(200).json({ success: true, message: 'User updated successfully' });
 }
 
 // إضافة موظف جديد
@@ -288,7 +252,8 @@ export default async function handler(req, res) {
 
         // 5. User Management Routes (Super Admin Only)
         // نستخدم action للتمييز بدلاً من المسار
-if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {            
+        if (['get_users', 'add_user', 'delete_user', 'change_password'].includes(action)) {
+            
             // استثناء: تغيير كلمة المرور مسموح للمستخدم لنفسه
             if (user.role !== 'super_admin' && action !== 'change_password') {
                  return res.status(403).json({ error: 'Forbidden: Admins only' });
@@ -298,7 +263,6 @@ if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].i
             if (action === 'add_user') return handleAddUser(req, res);
             if (action === 'delete_user') return handleDeleteUser(req, res);
             if (action === 'change_password') return handleChangePassword(req, res, user);
-            if (action === 'update_user') return handleUpdateUser(req, res); // <--- إضافة
         }
 
         // 6. Lead Management Routes (CRUD for Google Sheets)
@@ -446,11 +410,7 @@ async function handleGet(req, res, user) {
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
-// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
-        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
-        if (user.role !== 'super_admin') {
-            data = data.filter(item => item.status.toLowerCase() !== 'paid');
-        }
+
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
@@ -593,23 +553,6 @@ async function handlePut(req, res, user) {
 
         const rowToUpdate = rows[rowIndex];
 
-        // --- (SECURITY CHECK) التحقق الأمني قبل التعديل ---
-        const currentStatus = (rowToUpdate.get('Payment Status') || '').toLowerCase();
-
-        // إذا لم يكن سوبر أدمن، وكانت الحالة الحالية "مدفوع"، نمنع التعديل
-        // (هذا حماية إضافية في حال حاول استدعاء الـ API مباشرة لمعاملة مدفوعة)
-        if (user.role !== 'super_admin') {
-             // شرط 1: لا يمكنه تعديل معاملة هي أصلاً مدفوعة
-            if (currentStatus === 'paid') {
-                return res.status(403).json({ error: 'لا تملك صلاحية تعديل المعاملات المدفوعة.' });
-            }
-            
-            // شرط 2: التحقق من صلاحية التعديل العامة (التي أضفناها سابقاً)
-            if (!user.permissions?.can_edit) {
-                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
-            }
-        }
-
         // تحديث شامل لكل الحقول
         if (updatedItem.customerName) rowToUpdate.set('Full Name', updatedItem.customerName);
         if (updatedItem.customerEmail) rowToUpdate.set('Email', updatedItem.customerEmail);
@@ -732,14 +675,9 @@ async function authenticateUser(req, res) {
                 // جلب الصلاحيات
                 const { data: roleData } = await supabase
     .from('user_roles')
-    .select('role, can_edit, can_view_stats, is_frozen') // <---
+    .select('role, can_edit, can_view_stats') // <---
     .eq('user_id', user.id)
     .single();
-
-    // (هام) التحقق من التجميد: إذا كان مجمداً، نرفض الدخول فوراً
-                if (roleData?.is_frozen) {
-                    return null; // سيؤدي هذا لعودة 401 وتسجيل الخروج في الواجهة
-                }
 
 return {
     email: user.email,
