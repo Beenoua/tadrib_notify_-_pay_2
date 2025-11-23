@@ -401,25 +401,24 @@ return res.status(200).json({
  * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
-// متغيرات الكاش (خارج الدالة)
+// متغيرات الكاش (تأكد من وجودها في أعلى الملف)
 let cachedData = null;
 let lastFetchTime = 0;
-const CACHE_DURATION = 60 * 1000; // دقيقة واحدة
+const CACHE_DURATION = 60 * 1000;
 
 async function handleGet(req, res, user) {
     try {
         const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
 
-        // 1. استخدام الكاش لتخفيف الضغط على جوجل
+        // 1. إدارة الكاش والبيانات
         const now = Date.now();
         let data = [];
 
-        // إذا كان هناك كاش صالح ولم يمر عليه دقيقة، نستخدمه
         if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
             console.log('Serving from cache');
-            data = JSON.parse(JSON.stringify(cachedData)); // نسخة عميقة
+            // البيانات القادمة من الكاش تكون النصوص فيها نصوصاً وليس كائنات تواريخ
+            data = JSON.parse(JSON.stringify(cachedData)); 
         } else {
-            // جلب جديد من جوجل
             try {
                 const sheet = await getGoogleSheet();
                 const rows = await sheet.getRows();
@@ -447,31 +446,39 @@ async function handleGet(req, res, user) {
                     utm_term: row.get('utm_term') || '',
                     utm_content: row.get('utm_content') || '',
                     lastUpdatedBy: row.get('Last Updated By') || '',
-                    parsedDate: parseDate(row.get('Timestamp') || ''),
-                    normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
+                    // نحفظه كنص ISO لضمان التوافق عند التخزين والاسترجاع
+                    parsedDate: parseDate(row.get('Timestamp') || '') 
                 }));
 
-                // تحديث الكاش
-                cachedData = data;
+                // عند الحفظ في الكاش، التواريخ ستتحول لنصوص تلقائياً
+                cachedData = data; 
                 lastFetchTime = now;
 
             } catch (googleError) {
-                // إذا فشل جوجل (بسبب الضغط 429)، نستخدم الكاش القديم إن وجد
                 console.error('Google Sheet Error:', googleError.message);
                 if (cachedData) {
                     console.warn('Returning stale cache due to Google API error');
                     data = JSON.parse(JSON.stringify(cachedData));
                 } else {
-                    // إذا لم يوجد كاش، نلقي الخطأ ليتم التعامل معه
                     throw googleError; 
                 }
             }
         }
 
-        // 2. الفلتر الأمني (للمحررين)
+        // 2. الفلتر الأمني
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
+
+        // **ملاحظة هامة:**
+        // بما أننا نتعامل مع بيانات قد تكون من الكاش (نصوص) أو جديدة (كائنات)،
+        // يجب توحيد التعامل مع التواريخ قبل الفلترة والترتيب.
+        // سنقوم بإعادة بناء كائنات التاريخ لكل صف لضمان عمل الدوال .getTime() وغيرها
+        data.forEach(item => {
+            if (item.parsedDate && typeof item.parsedDate === 'string') {
+                item.parsedDate = new Date(item.parsedDate);
+            }
+        });
 
         // 3. الحسابات والفلترة
         const overallStats = calculateStatistics(data);
@@ -493,11 +500,18 @@ async function handleGet(req, res, user) {
             filteredStats = calculateStatistics(filteredData);
         }
 
-        // 4. إرسال الاستجابة (JSON سليم دائماً)
+        // 4. الترتيب الآمن (Safe Sort)
+        // الآن نحن متأكدون أن parsedDate هو كائن Date صالح (أو null) بفضل الحلقة في الخطوة 2
+        const sortedData = filteredData.sort((a, b) => {
+            const dateA = a.parsedDate ? a.parsedDate.getTime() : 0;
+            const dateB = b.parsedDate ? b.parsedDate.getTime() : 0;
+            return dateB - dateA; // الأحدث أولاً
+        });
+
         res.status(200).json({
             success: true,
             statistics: { overall: overallStats, filtered: filteredStats },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
+            data: sortedData,
             isFiltered: isFiltered,
             currentUser: { 
                 email: user.email, 
@@ -508,11 +522,10 @@ async function handleGet(req, res, user) {
 
     } catch (error) {
         console.error('Admin GET API Critical Error:', error);
-        // إرجاع JSON خطأ بدلاً من HTML أو نص عادي لتجنب خطأ "undefined is not valid JSON"
         res.status(500).json({ 
             error: error.message || 'Internal Server Error', 
             success: false,
-            data: [] // إرجاع مصفوفة فارغة لتجنب كسر الجدول
+            data: [] 
         });
     }
 }
