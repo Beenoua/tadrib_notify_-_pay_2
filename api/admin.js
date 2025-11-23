@@ -404,7 +404,7 @@ return res.status(200).json({
 // متغيرات الكاش (تأكد من وجودها في أعلى الملف)
 let cachedData = null;
 let lastFetchTime = 0;
-const CACHE_DURATION = 60 * 1000;
+const CACHE_DURATION = 0;
 
 async function handleGet(req, res, user) {
     try {
@@ -413,17 +413,38 @@ async function handleGet(req, res, user) {
         // 1. إدارة الكاش والبيانات
         const now = Date.now();
         let data = [];
+        let servedFromCache = false; // متغير جديد لتتبع حالة الكاش
 
+        // --- بداية الإصلاح: تحسين منطق الكاش ---
         if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
-            console.log('Serving from cache');
-            // البيانات القادمة من الكاش تكون النصوص فيها نصوصاً وليس كائنات تواريخ
-            data = JSON.parse(JSON.stringify(cachedData)); 
-        } else {
+            try {
+                console.log('Attempting to serve from cache...');
+                
+                // تحقق إضافي: تأكد أن الكاش مصفوفة صالحة
+                if (!Array.isArray(cachedData)) {
+                    throw new Error("Cached data is not an array (Corruption detected)");
+                }
+
+                // محاولة النسخ
+                data = JSON.parse(JSON.stringify(cachedData));
+                servedFromCache = true;
+                console.log('Successfully served from cache');
+
+            } catch (cacheError) {
+                console.warn('Cache failed, forcing refresh:', cacheError.message);
+                cachedData = null; // مسح الكاش الفاسد فوراً
+                servedFromCache = false;
+            }
+        }
+
+        // إذا لم يتم الخدمة من الكاش (إما انتهى الوقت أو فشل الكاش)، اجلب من المصدر
+        if (!servedFromCache) {
             try {
                 const sheet = await getGoogleSheet();
                 const rows = await sheet.getRows();
                 
                 data = rows.map(row => ({
+                    // ... (نفس كود الخرائط Mapping الموجود سابقاً كما هو) ...
                     timestamp: row.get('Timestamp') || '',
                     inquiryId: row.get('Inquiry ID') || '',
                     customerName: row.get('Full Name') || '',
@@ -446,17 +467,17 @@ async function handleGet(req, res, user) {
                     utm_term: row.get('utm_term') || '',
                     utm_content: row.get('utm_content') || '',
                     lastUpdatedBy: row.get('Last Updated By') || '',
-                    // نحفظه كنص ISO لضمان التوافق عند التخزين والاسترجاع
                     parsedDate: parseDate(row.get('Timestamp') || '') 
                 }));
 
-                // عند الحفظ في الكاش، التواريخ ستتحول لنصوص تلقائياً
+                // تحديث الكاش بالبيانات الجديدة السليمة
                 cachedData = data; 
                 lastFetchTime = now;
 
             } catch (googleError) {
                 console.error('Google Sheet Error:', googleError.message);
-                if (cachedData) {
+                // في حال فشل جوجل شيت، نحاول استخدام الكاش القديم كملاذ أخير إذا وجد
+                if (cachedData && Array.isArray(cachedData)) {
                     console.warn('Returning stale cache due to Google API error');
                     data = JSON.parse(JSON.stringify(cachedData));
                 } else {
@@ -464,6 +485,7 @@ async function handleGet(req, res, user) {
                 }
             }
         }
+        // --- نهاية الإصلاح ---
 
         // 2. الفلتر الأمني
         if (user.role !== 'super_admin') {
