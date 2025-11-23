@@ -418,7 +418,7 @@ async function handleGet(req, res, user) {
         const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
-        const data = rows.map(row => ({
+        let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
             inquiryId: row.get('Inquiry ID') || '',
             customerName: row.get('Full Name') || '',
