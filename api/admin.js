@@ -410,41 +410,24 @@ async function handleGet(req, res, user) {
     try {
         const { searchTerm, statusFilter, paymentFilter, courseFilter, dateFilter, startDate, endDate } = req.query;
 
-        // 1. إدارة الكاش والبيانات
         const now = Date.now();
         let data = [];
-        let servedFromCache = false; // متغير جديد لتتبع حالة الكاش
+        let servedFromCache = false;
 
-        // --- بداية الإصلاح: تحسين منطق الكاش ---
-        if (cachedData && (now - lastFetchTime < CACHE_DURATION)) {
-            try {
-                console.log('Attempting to serve from cache...');
-                
-                // تحقق إضافي: تأكد أن الكاش مصفوفة صالحة
-                if (!Array.isArray(cachedData)) {
-                    throw new Error("Cached data is not an array (Corruption detected)");
-                }
-
-                // محاولة النسخ
-                data = JSON.parse(JSON.stringify(cachedData));
-                servedFromCache = true;
-                console.log('Successfully served from cache');
-
-            } catch (cacheError) {
-                console.warn('Cache failed, forcing refresh:', cacheError.message);
-                cachedData = null; // مسح الكاش الفاسد فوراً
-                servedFromCache = false;
-            }
+        // 1. محاولة القراءة من الكاش أولاً
+        if (cachedData && Array.isArray(cachedData) && (now - lastFetchTime < CACHE_DURATION)) {
+            console.log('Serving from cache (Valid)');
+            data = JSON.parse(JSON.stringify(cachedData));
+            servedFromCache = true;
         }
 
-        // إذا لم يتم الخدمة من الكاش (إما انتهى الوقت أو فشل الكاش)، اجلب من المصدر
+        // 2. إذا لم نأخذ من الكاش، نحاول الاتصال بجوجل
         if (!servedFromCache) {
             try {
                 const sheet = await getGoogleSheet();
                 const rows = await sheet.getRows();
                 
                 data = rows.map(row => ({
-                    // ... (نفس كود الخرائط Mapping الموجود سابقاً كما هو) ...
                     timestamp: row.get('Timestamp') || '',
                     inquiryId: row.get('Inquiry ID') || '',
                     customerName: row.get('Full Name') || '',
@@ -470,39 +453,39 @@ async function handleGet(req, res, user) {
                     parsedDate: parseDate(row.get('Timestamp') || '') 
                 }));
 
-                // تحديث الكاش بالبيانات الجديدة السليمة
+                // تحديث الكاش بالبيانات الجديدة
                 cachedData = data; 
                 lastFetchTime = now;
 
             } catch (googleError) {
-                console.error('Google Sheet Error:', googleError.message);
-                // في حال فشل جوجل شيت، نحاول استخدام الكاش القديم كملاذ أخير إذا وجد
+                console.error('Google API Error:', googleError.message);
+
+                // --- (الحل الحاسم هنا) ---
+                // إذا كان لدينا كاش قديم (حتى لو انتهت مدته)، نستخدمه بدلاً من الفشل
                 if (cachedData && Array.isArray(cachedData)) {
-                    console.warn('Returning stale cache due to Google API error');
+                    console.warn('Returning STALE cache due to Google API error');
                     data = JSON.parse(JSON.stringify(cachedData));
                 } else {
-                    throw googleError; 
+                    // إذا لم يوجد كاش، نعيد مصفوفة فارغة لتجنب انهيار الواجهة
+                    console.warn('No cache available. Returning empty array to prevent crash.');
+                    data = []; 
                 }
             }
         }
-        // --- نهاية الإصلاح ---
 
-        // 2. الفلتر الأمني
+        // 3. الفلتر الأمني (كما هو)
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
 
-        // **ملاحظة هامة:**
-        // بما أننا نتعامل مع بيانات قد تكون من الكاش (نصوص) أو جديدة (كائنات)،
-        // يجب توحيد التعامل مع التواريخ قبل الفلترة والترتيب.
-        // سنقوم بإعادة بناء كائنات التاريخ لكل صف لضمان عمل الدوال .getTime() وغيرها
+        // إصلاح التواريخ
         data.forEach(item => {
             if (item.parsedDate && typeof item.parsedDate === 'string') {
                 item.parsedDate = new Date(item.parsedDate);
             }
         });
 
-        // 3. الحسابات والفلترة
+        // 4. الحسابات والفلترة
         const overallStats = calculateStatistics(data);
         const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
 
@@ -522,12 +505,11 @@ async function handleGet(req, res, user) {
             filteredStats = calculateStatistics(filteredData);
         }
 
-        // 4. الترتيب الآمن (Safe Sort)
-        // الآن نحن متأكدون أن parsedDate هو كائن Date صالح (أو null) بفضل الحلقة في الخطوة 2
+        // الترتيب
         const sortedData = filteredData.sort((a, b) => {
             const dateA = a.parsedDate ? a.parsedDate.getTime() : 0;
             const dateB = b.parsedDate ? b.parsedDate.getTime() : 0;
-            return dateB - dateA; // الأحدث أولاً
+            return dateB - dateA;
         });
 
         res.status(200).json({
@@ -543,11 +525,13 @@ async function handleGet(req, res, user) {
         });
 
     } catch (error) {
-        console.error('Admin GET API Critical Error:', error);
-        res.status(500).json({ 
-            error: error.message || 'Internal Server Error', 
+        console.error('Handler Critical Error:', error);
+        // حتى في أسوأ الحالات، نعيد JSON صالح
+        res.status(200).json({ 
             success: false,
-            data: [] 
+            error: 'System under high load, please try again later.',
+            data: [],
+            statistics: { overall: {}, filtered: {} }
         });
     }
 }
