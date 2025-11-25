@@ -491,12 +491,8 @@ async function handleGet(req, res, user) {
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
             isFiltered: isFiltered,
-currentUser: { 
-    email: user.email, 
-    role: user.role,
-    // الإضافة الجديدة: نرسل الصلاحيات الحية من قاعدة البيانات
-    permissions: user.permissions 
-}        });
+            currentUser: { email: user.email, role: user.role } 
+       });
 
     } catch (error) {
         console.error('Admin GET API Error:', error);
@@ -840,3 +836,4 @@ function normalizeCourseName(raw) {
     }
     return 'دورات أخرى';
 }
+
