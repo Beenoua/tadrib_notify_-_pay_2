@@ -162,36 +162,50 @@ async function handleGetUsers(res) {
     return res.status(200).json({ success: true, data: usersList });
 }
 
-// تحديث بيانات الموظف (صلاحيات + تجميد)
-// تحديث بيانات الموظف (صلاحيات + تجميد) - نسخة محسنة
+// تحديث بيانات الموظف (نسخة العميل المعزول الآمنة)
 async function handleUpdateUser(req, res) {
     const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
-    // التأكد من وجود البيانات الأساسية
+
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
-    
-    // جلب البريد الإلكتروني للمستخدم لضمان تخزينه في جدول الأدوار
-    const { data: { user }, error: fetchError } = await supabase.auth.admin.getUserById(userId);
-    if (fetchError || !user) return res.status(404).json({ error: 'User not found in Auth' });
 
-    // استخدام upsert بدلاً من update
-    // upsert: يقوم بالتحديث إذا كان السجل موجوداً، أو الإنشاء إذا لم يكن موجوداً
-    const { error } = await supabase
-        .from('user_roles')
-        .upsert({ 
-            user_id: userId,
-            email: user.email, // ضروري عند الإنشاء الجديد
-            role: role,
-            can_edit: role === 'super_admin' ? true : can_edit,
-            can_view_stats: role === 'super_admin' ? true : can_view_stats,
-            is_frozen: is_frozen
-        }, { onConflict: 'user_id' }); // الاعتماد على user_id كمفتاح فريد
+    // 1. إنشاء عميل Supabase جديد ومستقل تماماً لهذه العملية فقط
+    // هذا يضمن أننا نستخدم مفتاح Service Role النظيف بعيداً عن جلسة الموظف الحالي
+    const adminClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false // منع حفظ الجلسة
+        }
+    });
 
-    if (error) {
+    try {
+        // 2. جلب بيانات المستخدم للتأكد من وجوده (باستخدام العميل الجديد)
+        const { data: { user }, error: fetchError } = await adminClient.auth.admin.getUserById(userId);
+        
+        if (fetchError || !user) {
+            return res.status(404).json({ error: 'User not found in Auth' });
+        }
+
+        // 3. تنفيذ التحديث (Upsert) باستخدام العميل الجديد
+        // الآن قاعدة البيانات ستراك كـ "Service Role" ولن تظهر رسالة 42501
+        const { error } = await adminClient
+            .from('user_roles')
+            .upsert({ 
+                user_id: userId,
+                email: user.email,
+                role: role,
+                can_edit: role === 'super_admin' ? true : can_edit,
+                can_view_stats: role === 'super_admin' ? true : can_view_stats,
+                is_frozen: is_frozen
+            }, { onConflict: 'user_id' });
+
+        if (error) throw error;
+
+        return res.status(200).json({ success: true, message: 'User updated successfully' });
+
+    } catch (error) {
         console.error('Update Role Error:', error);
         return res.status(500).json({ error: error.message });
     }
-
-    return res.status(200).json({ success: true, message: 'User updated successfully' });
 }
 
 // إضافة موظف جديد
