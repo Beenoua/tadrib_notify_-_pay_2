@@ -168,26 +168,24 @@ async function handleUpdateUser(req, res) {
 
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
-    // 1. إنشاء عميل Supabase جديد ومستقل تماماً لهذه العملية فقط
-    // هذا يضمن أننا نستخدم مفتاح Service Role النظيف بعيداً عن جلسة الموظف الحالي
+    // إنشاء عميل معزول (كما اتفقنا سابقاً)
     const adminClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
         auth: {
             autoRefreshToken: false,
-            persistSession: false // منع حفظ الجلسة
+            persistSession: false
         }
     });
 
     try {
-        // 2. جلب بيانات المستخدم للتأكد من وجوده (باستخدام العميل الجديد)
         const { data: { user }, error: fetchError } = await adminClient.auth.admin.getUserById(userId);
         
         if (fetchError || !user) {
             return res.status(404).json({ error: 'User not found in Auth' });
         }
 
-        // 3. تنفيذ التحديث (Upsert) باستخدام العميل الجديد
-        // الآن قاعدة البيانات ستراك كـ "Service Role" ولن تظهر رسالة 42501
-        const { error } = await adminClient
+        // --- التغيير هنا ---
+        // أضفنا .select() لنرى ما تم كتابته في القاعدة
+        const { data, error } = await adminClient
             .from('user_roles')
             .upsert({ 
                 user_id: userId,
@@ -196,11 +194,15 @@ async function handleUpdateUser(req, res) {
                 can_edit: role === 'super_admin' ? true : can_edit,
                 can_view_stats: role === 'super_admin' ? true : can_view_stats,
                 is_frozen: is_frozen
-            }, { onConflict: 'user_id' });
+            }, { onConflict: 'user_id' })
+            .select(); // <--- هام جداً: إرجاع السجل المحدث
 
         if (error) throw error;
 
-        return res.status(200).json({ success: true, message: 'User updated successfully' });
+        // سنطبع البيانات في سجلات Vercel لنرى هل تغيرت فعلاً
+        console.log('Updated Row Data:', data);
+
+        return res.status(200).json({ success: true, message: 'User updated successfully', updatedData: data });
 
     } catch (error) {
         console.error('Update Role Error:', error);
