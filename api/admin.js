@@ -163,23 +163,33 @@ async function handleGetUsers(res) {
 }
 
 // تحديث بيانات الموظف (صلاحيات + تجميد)
+// تحديث بيانات الموظف (صلاحيات + تجميد) - نسخة محسنة
 async function handleUpdateUser(req, res) {
     const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
-
+    // التأكد من وجود البيانات الأساسية
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
+    
+    // جلب البريد الإلكتروني للمستخدم لضمان تخزينه في جدول الأدوار
+    const { data: { user }, error: fetchError } = await supabase.auth.admin.getUserById(userId);
+    if (fetchError || !user) return res.status(404).json({ error: 'User not found in Auth' });
 
-    // تحديث جدول user_roles
+    // استخدام upsert بدلاً من update
+    // upsert: يقوم بالتحديث إذا كان السجل موجوداً، أو الإنشاء إذا لم يكن موجوداً
     const { error } = await supabase
         .from('user_roles')
-        .update({ 
+        .upsert({ 
+            user_id: userId,
+            email: user.email, // ضروري عند الإنشاء الجديد
             role: role,
             can_edit: role === 'super_admin' ? true : can_edit,
             can_view_stats: role === 'super_admin' ? true : can_view_stats,
-            is_frozen: is_frozen // تحديث حالة التجميد
-        })
-        .eq('user_id', userId);
+            is_frozen: is_frozen
+        }, { onConflict: 'user_id' }); // الاعتماد على user_id كمفتاح فريد
 
-    if (error) throw error;
+    if (error) {
+        console.error('Update Role Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
 
     return res.status(200).json({ success: true, message: 'User updated successfully' });
 }
@@ -491,8 +501,8 @@ async function handleGet(req, res, user) {
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
             isFiltered: isFiltered,
-            currentUser: { email: user.email, role: user.role } 
-       });
+            currentUser: { email: user.email, role: user.role } // نرسل معلومات المستخدم الحالي للواجهة
+        });
 
     } catch (error) {
         console.error('Admin GET API Error:', error);
@@ -836,4 +846,3 @@ function normalizeCourseName(raw) {
     }
     return 'دورات أخرى';
 }
-
