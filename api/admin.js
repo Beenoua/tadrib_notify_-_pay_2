@@ -217,27 +217,29 @@ function calculateStatistics(dataArray) {
 }
 
 // ===================================================================
-// User Management Handlers (New)
+// User Management Handlers (CORRECTED WITH CONTEXT)
 // ===================================================================
 
 // جلب قائمة المستخدمين
-async function handleGetUsers(res) {
+async function handleGetUsers(res, context) { // <--- أضفنا context
+    // نستخدم العميل المناسب من السياق
+    const db = context.type === 'backdoor' ? context.dbClient : context.systemClient;
+    if (!db) return res.status(403).json({ error: 'System Access Required' });
+
     // 1. جلب المستخدمين من Auth
-    const { data: { users }, error } = await supabase.auth.admin.listUsers();
+    const { data: { users }, error } = await db.auth.admin.listUsers();
     if (error) throw error;
 
-    // 2. جلب تفاصيل الأدوار (Roles & Frozen Status) لجميع المستخدمين
-    const { data: rolesData } = await supabase
+    // 2. جلب تفاصيل الأدوار
+    const { data: rolesData } = await db
         .from('user_roles')
         .select('user_id, role, is_frozen, can_edit, can_view_stats');
 
-    // تحويل المصفوفة إلى Map لسهولة البحث
     const rolesMap = {};
     if (rolesData) {
         rolesData.forEach(r => rolesMap[r.user_id] = r);
     }
 
-    // 3. دمج البيانات
     const usersList = users.map(u => {
         const r = rolesMap[u.id] || {};
         return {
@@ -254,38 +256,23 @@ async function handleGetUsers(res) {
     return res.status(200).json({ success: true, data: usersList });
 }
 
-// تحديث بيانات الموظف (نسخة العميل المعزول الآمنة)
-async function handleUpdateUser(req, res) {
+// تحديث بيانات الموظف
+async function handleUpdateUser(req, res, context) { // <--- أضفنا context
     const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
-
-    // القاعدة الذهبية:
-    // إذا كان المستخدم backdoor أو super_admin، نستخدم "Service Client" (الموجود في context.dbClient للباك دور أو context.systemClient للمدير)
-    // لضمان تجاوز أي قيود RLS أثناء إدارة الموظفين الآخرين.
     
+    // استخدام العميل "Service Role" الموجود في السياق
     const db = context.type === 'backdoor' ? context.dbClient : context.systemClient;
-
     if (!db) return res.status(403).json({ error: 'System Access Required' });
 
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
-    // إنشاء عميل معزول (كما اتفقنا سابقاً)
-    const adminClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: {
-            autoRefreshToken: false,
-            persistSession: false
-        }
-    });
-
     try {
-        const { data: { user }, error: fetchError } = await adminClient.auth.admin.getUserById(userId);
-        
-        if (fetchError || !user) {
-            return res.status(404).json({ error: 'User not found in Auth' });
-        }
+        // جلب البريد لضمان صحة البيانات
+        const { data: { user }, error: fetchError } = await db.auth.admin.getUserById(userId);
+        if (fetchError || !user) return res.status(404).json({ error: 'User not found in Auth' });
 
-        // --- التغيير هنا ---
-        // أضفنا .select() لنرى ما تم كتابته في القاعدة
-        const { data, error } = await adminClient
+        // التحديث باستخدام العميل الآمن
+        const { data, error } = await db
             .from('user_roles')
             .upsert({ 
                 user_id: userId,
@@ -295,12 +282,9 @@ async function handleUpdateUser(req, res) {
                 can_view_stats: role === 'super_admin' ? true : can_view_stats,
                 is_frozen: is_frozen
             }, { onConflict: 'user_id' })
-            .select(); // <--- هام جداً: إرجاع السجل المحدث
+            .select();
 
         if (error) throw error;
-
-        // سنطبع البيانات في سجلات Vercel لنرى هل تغيرت فعلاً
-        console.log('Updated Row Data:', data);
 
         return res.status(200).json({ success: true, message: 'User updated successfully', updatedData: data });
 
@@ -311,45 +295,60 @@ async function handleUpdateUser(req, res) {
 }
 
 // إضافة موظف جديد
-async function handleAddUser(req, res) {
-const { email, password, role, can_edit, can_view_stats } = req.body;
-    // 1. إنشاء المستخدم في Supabase Auth
-    const { data: userData, error: createError } = await supabase.auth.admin.createUser({
-        email: email,
-        password: password,
-        email_confirm: true // تفعيل الحساب مباشرة
-    });
+async function handleAddUser(req, res, context) { // <--- أضفنا context
+    const { email, password, role, can_edit, can_view_stats } = req.body;
+    
+    const db = context.type === 'backdoor' ? context.dbClient : context.systemClient;
+    if (!db) return res.status(403).json({ error: 'System Access Required' });
 
-    if (createError) throw createError;
+    try {
+        const { data: userData, error: createError } = await db.auth.admin.createUser({
+            email: email,
+            password: password,
+            email_confirm: true
+        });
 
-    // 2. تعيين الصلاحية في جدول user_roles
-    if (userData.user) {
-        const { error: roleError } = await supabase
-            .from('user_roles')
-            .insert([{ 
-                user_id: userData.user.id, 
-                role: role, 
-                email: email,
-                // حفظ الصلاحيات
-                can_edit: role === 'super_admin' ? true : (can_edit || false),
-                can_view_stats: role === 'super_admin' ? true : (can_view_stats || false)
-            }]);        
-        if (roleError) {
-            // تنظيف: حذف المستخدم إذا فشل تعيين الدور
-            await supabase.auth.admin.deleteUser(userData.user.id);
-            throw roleError;
+        if (createError) throw createError;
+
+        if (userData.user) {
+            const { error: roleError } = await db
+                .from('user_roles')
+                .upsert([{ 
+                    user_id: userData.user.id, 
+                    role: role, 
+                    email: email,
+                    can_edit: role === 'super_admin' ? true : (can_edit || false),
+                    can_view_stats: role === 'super_admin' ? true : (can_view_stats || false)
+                }], { onConflict: 'user_id' }); // ضمان عدم التكرار
+
+            if (roleError) {
+                // تراجع: حذف المستخدم إذا فشل تعيين الدور
+                await db.auth.admin.deleteUser(userData.user.id);
+                throw roleError;
+            }
         }
-    }
+        return res.status(201).json({ success: true, message: 'User created successfully' });
 
-    return res.status(201).json({ success: true, message: 'User created successfully' });
+    } catch (error) {
+        console.error('Add User Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
 }
 
 // حذف موظف
-async function handleDeleteUser(req, res) {
+async function handleDeleteUser(req, res, context) { // <--- أضفنا context
     const { userId } = req.body;
+    
+    const db = context.type === 'backdoor' ? context.dbClient : context.systemClient;
+    if (!db) return res.status(403).json({ error: 'System Access Required' });
+
     if (!userId) return res.status(400).json({ error: 'User ID required' });
 
-    const { error } = await supabase.auth.admin.deleteUser(userId);
+    // 1. حذف من user_roles أولاً (اختياري لأن Auth يحذفه تلقائياً لكن للأمان)
+    await db.from('user_roles').delete().eq('user_id', userId);
+
+    // 2. حذف من Auth
+    const { error } = await db.auth.admin.deleteUser(userId);
     if (error) throw error;
 
     return res.status(200).json({ success: true, message: 'User deleted' });
@@ -412,7 +411,12 @@ export default async function handler(req, res) {
         // ============================================================
 
         // عمليات إدارة المستخدمين (تتطلب صلاحيات خاصة)
-        if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {
+        // داخل دالة handler ...
+if (action === 'get_users') return handleGetUsers(res, context); // <--- مرر context
+if (action === 'add_user') return handleAddUser(req, res, context); // <--- مرر context
+if (action === 'delete_user') return handleDeleteUser(req, res, context); // <--- مرر context
+if (action === 'update_user') return handleUpdateUser(req, res, context); // <--- مرر context
+        {
             
             // تحقق صارم: هل يسمح السياق بذلك؟
             // الباب الخلفي دائماً مسموح، Supabase فقط إذا كان Super Admin
