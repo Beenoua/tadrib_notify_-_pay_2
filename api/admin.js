@@ -32,6 +32,98 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
 }
 
 // ===================================================================
+// 1. Strict Context Factory (مصنع السياق الصارم)
+// ===================================================================
+
+/**
+ * هذه الدالة هي "نقطة التفتيش". تحدد نوع المستخدم وتعطيه الأداة المناسبة فقط.
+ * تمنع خلط الصلاحيات نهائياً.
+ */
+async function getRequestContext(req) {
+    const authHeader = req.headers.authorization || '';
+    const cookieHeader = req.headers.cookie || '';
+
+    // --- المسار الأول: Backdoor (Super Admin) ---
+    // الشروط: وجود الكوكيز الخاص بالأدمن أو Basic Auth صحيح
+    const isBackdoorCookie = cookieHeader.includes('admin_session=1');
+    let isBackdoorBasic = false;
+    
+    if (authHeader.startsWith('Basic ')) {
+        const creds = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
+        if (creds[0] === process.env.ADMIN_USERNAME && creds[1] === process.env.ADMIN_PASSWORD) {
+            isBackdoorBasic = true;
+        }
+    }
+
+    if (isBackdoorCookie || isBackdoorBasic) {
+        // ✅ إنشاء عميل "Admin" معزول بصلاحيات Service Role
+        // هذا العميل يتجاوز كل سياسات RLS (God Mode)
+        const adminClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+            auth: { autoRefreshToken: false, persistSession: false }
+        });
+        
+        return {
+            type: 'backdoor',
+            role: 'super_admin',
+            email: 'master_admin@system.local',
+            // هذا العميل يملك صلاحية تعديل أي شيء
+            dbClient: adminClient, 
+            permissions: { can_edit: true, can_view_stats: true }
+        };
+    }
+
+    // --- المسار الثاني: Supabase User (Staff) ---
+    // الشروط: وجود Bearer Token
+    if (authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        
+        // ✅ إنشاء عميل "User" مقيد بالتوكن
+        // هذا العميل يحترم سياسات RLS ولا يمكنه تجاوزها
+        const userClient = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+            global: { headers: { Authorization: `Bearer ${token}` } },
+            auth: { autoRefreshToken: false, persistSession: false }
+        });
+
+        // التحقق من صحة التوكن
+        const { data: { user }, error } = await userClient.auth.getUser();
+
+        if (error || !user) return null; // توكن غير صالح
+
+        // جلب الصلاحيات من جدول user_roles
+        // نستخدم userClient هنا، لذا يجب أن تسمح سياسات RLS بالقراءة (وهذا ما فعلناه سابقاً)
+        const { data: roleData } = await userClient
+            .from('user_roles')
+            .select('role, can_edit, can_view_stats, is_frozen')
+            .eq('user_id', user.id)
+            .single();
+
+        if (roleData?.is_frozen) return null; // حساب مجمد
+
+        // تحديد الصلاحيات بناءً على الدور
+        const isSuper = roleData?.role === 'super_admin';
+
+        return {
+            type: 'supabase',
+            role: roleData?.role || 'editor',
+            email: user.email,
+            id: user.id,
+            // هذا العميل مقيد بصلاحيات الموظف
+            dbClient: userClient, 
+            // إذا كان سوبر أدمن، نعطيه Admin Client لعمليات التعديل الحساسة، وإلا نعطيه User Client
+            // هذه نقطة ذكية: الموظف العادي يستخدم عميله، المدير يستخدم عميل الخدمة عند الحاجة
+            permissions: {
+                can_edit: isSuper ? true : !!roleData?.can_edit,
+                can_view_stats: isSuper ? true : !!roleData?.can_view_stats
+            },
+            // نحتفظ بمرجع للـ Service Client للحالات الطارئة للمدراء فقط
+            systemClient: isSuper ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }) : null
+        };
+    }
+
+    return null; // لا يوجد دخول
+}
+
+// ===================================================================
 // (NEW) دوال مساعدة تم جلبها من الواجهة الأمامية
 // ===================================================================
 
@@ -166,6 +258,14 @@ async function handleGetUsers(res) {
 async function handleUpdateUser(req, res) {
     const { userId, role, can_edit, can_view_stats, is_frozen } = req.body;
 
+    // القاعدة الذهبية:
+    // إذا كان المستخدم backdoor أو super_admin، نستخدم "Service Client" (الموجود في context.dbClient للباك دور أو context.systemClient للمدير)
+    // لضمان تجاوز أي قيود RLS أثناء إدارة الموظفين الآخرين.
+    
+    const db = context.type === 'backdoor' ? context.dbClient : context.systemClient;
+
+    if (!db) return res.status(403).json({ error: 'System Access Required' });
+
     if (!userId) return res.status(400).json({ error: 'User ID is required' });
 
     // إنشاء عميل معزول (كما اتفقنا سابقاً)
@@ -293,16 +393,39 @@ export default async function handler(req, res) {
     }
 
     try {
-        // قراءة المعاملات من الرابط
-        const { action } = req.query || {}; 
+        const { action } = req.query || {};
 
-        // 3. Public Routes (Login / Logout)
-        // نتحقق من action login أو البحث في الجسم
-        if (action === 'login' || (req.method === 'POST' && req.body && req.body.username && !req.headers.authorization)) {
-            return handleLogin(req, res);
+        // 1. مسارات عامة (Login/Logout) لا تحتاج سياق
+        if (action === 'login' || req.body?.username) return handleLogin(req, res);
+        if (action === 'logout') return handleLogout(req, res);
+
+        // 2. الحصول على "السياق الصارم"
+        const context = await getRequestContext(req);
+
+        if (!context) {
+            return res.status(401).json({ error: 'Unauthorized Access' });
         }
-        if (action === 'logout' || req.url.includes('/logout')) {
-            return handleLogout(req, res);
+
+        // ============================================================
+        // الآن نمرر الـ context بدلاً من user فقط
+        // الـ context يحتوي على dbClient الصحيح لهذه الجلسة
+        // ============================================================
+
+        // عمليات إدارة المستخدمين (تتطلب صلاحيات خاصة)
+        if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {
+            
+            // تحقق صارم: هل يسمح السياق بذلك؟
+            // الباب الخلفي دائماً مسموح، Supabase فقط إذا كان Super Admin
+            const isAllowed = context.type === 'backdoor' || context.role === 'super_admin';
+            
+            // استثناء: تغيير كلمة المرور مسموح للنفس
+            if (!isAllowed && action !== 'change_password') {
+                return res.status(403).json({ error: 'Forbidden: Admins Only' });
+            }
+
+            // ملاحظة: نمرر context لداخل الدوال لنستخدم العميل المناسب
+            if (action === 'update_user') return handleUpdateUser(req, res, context); 
+            // ... وهكذا لباقي الدوال
         }
 
         // 4. Authentication Check
