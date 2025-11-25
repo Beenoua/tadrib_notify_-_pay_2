@@ -491,8 +491,12 @@ async function handleGet(req, res, user) {
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
             isFiltered: isFiltered,
-            currentUser: { email: user.email, role: user.role } // نرسل معلومات المستخدم الحالي للواجهة
-        });
+currentUser: { 
+    email: user.email, 
+    role: user.role,
+    // الإضافة الجديدة: نرسل الصلاحيات الحية من قاعدة البيانات
+    permissions: user.permissions 
+}        });
 
     } catch (error) {
         console.error('Admin GET API Error:', error);
