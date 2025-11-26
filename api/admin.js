@@ -915,16 +915,16 @@ return {
 }
 
 async function getGoogleSheet() {
-    // ... (باقي الكود لم يتغير)
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // (FIX) إصلاح قراءة المفتاح الخاص
+    // التأكد من تنسيق المفتاح الخاص بشكل صحيح
     const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
     if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-        throw new Error('Missing Google Sheets credentials in environment variables');
+        throw new Error('Configuration Error: Missing Google Sheets credentials.');
     }
 
+    // إعداد الاتصال
     const serviceAccountAuth = new JWT({
         email: serviceAccountEmail,
         key: privateKey,
@@ -932,14 +932,31 @@ async function getGoogleSheet() {
     });
 
     const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    
+    // محاولة تحميل معلومات الملف
     await doc.loadInfo();
 
+    // [LOG] معلومات الملف الأساسية
+    console.log(`[GoogleSheets] Connected to: "${doc.title}"`);
+
+    // محاولة الوصول للورقة المحددة
     let sheet = doc.sheetsByTitle["Leads"];
-    if (!sheet) {
-        sheet = doc.sheetsByIndex[0]; // Fallback to first sheet
+
+    if (sheet) {
+        console.log(`[GoogleSheets] ✅ Using target sheet: "Leads"`);
+    } else {
+        // الخطة البديلة
+        sheet = doc.sheetsByIndex[0];
+        console.warn(`[GoogleSheets] ⚠️ "Leads" sheet not found. Fallback to index 0: "${sheet.title}"`);
     }
-    if (!sheet) {
-        throw new Error('No sheets found in the spreadsheet');
+
+    // التحقق من صحة العناوين (Headers) لتجنب الخطأ الشهير 500
+    try {
+        await sheet.loadHeaderRow();
+        console.log(`[GoogleSheets] Sheet Stats: ${sheet.rowCount} rows, ${sheet.columnCount} columns.`);
+    } catch (e) {
+        console.error(`[GoogleSheets] ❌ CRITICAL: Could not load header row. The sheet "${sheet.title}" might be empty!`);
+        // لا نرمي الخطأ هنا، نترك المكتبة تتصرف، لكننا سجلنا التحذير
     }
 
     return sheet;
