@@ -635,16 +635,24 @@ async function handleGet(req, res, user) {
             filteredStats = calculateStatistics(filteredData);
         }
 
-        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات
+        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات + (هام) تحديث بيانات المستخدم
         res.status(200).json({
             success: true,
             statistics: {
                 overall: overallStats,
                 filtered: filteredStats
             },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)), // إرجاع البيانات المفلترة فقط
+            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
             isFiltered: isFiltered,
-            currentUser: { email: user.email, role: user.role } // نرسل معلومات المستخدم الحالي للواجهة
+            // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
+            // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
+            currentUser: { 
+                email: user.email, 
+                role: user.role,
+                // نرسل الصلاحيات أيضاً لضمان التزامن
+                permissions: user.permissions || { can_edit: false, can_view_stats: false },
+                is_frozen: user.is_frozen || false // نحتاج معرفة إذا تم تجميده
+            } 
         });
 
     } catch (error) {
