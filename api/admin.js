@@ -406,17 +406,11 @@ export default async function handler(req, res) {
         }
 
         // ============================================================
-        // الآن نمرر الـ context بدلاً من user فقط
-        // الـ context يحتوي على dbClient الصحيح لهذه الجلسة
+        // 3. توجيه عمليات إدارة المستخدمين (User Management)
         // ============================================================
-
-        // عمليات إدارة المستخدمين (تتطلب صلاحيات خاصة)
-        // داخل دالة handler ...
-if (action === 'get_users') return handleGetUsers(res, context); // <--- مرر context
-if (action === 'add_user') return handleAddUser(req, res, context); // <--- مرر context
-if (action === 'delete_user') return handleDeleteUser(req, res, context); // <--- مرر context
-if (action === 'update_user') return handleUpdateUser(req, res, context); // <--- مرر context
-        {
+        const userMgmtActions = ['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'];
+        
+        if (userMgmtActions.includes(action)) {
             
             // تحقق صارم: هل يسمح السياق بذلك؟
             // الباب الخلفي دائماً مسموح، Supabase فقط إذا كان Super Admin
@@ -427,50 +421,48 @@ if (action === 'update_user') return handleUpdateUser(req, res, context); // <--
                 return res.status(403).json({ error: 'Forbidden: Admins Only' });
             }
 
-            // ملاحظة: نمرر context لداخل الدوال لنستخدم العميل المناسب
-            if (action === 'update_user') return handleUpdateUser(req, res, context); 
-            // ... وهكذا لباقي الدوال
+            // توجيه الطلب للدالة المناسبة مع تمرير الـ context
+            if (action === 'get_users') return handleGetUsers(res, context);
+            if (action === 'add_user') return handleAddUser(req, res, context);
+            if (action === 'delete_user') return handleDeleteUser(req, res, context);
+            if (action === 'update_user') return handleUpdateUser(req, res, context);
+            
+            // التعامل مع تغيير كلمة المرور (حالة خاصة تحتاج user object)
+            // سنتركها تمر للأسفل قليلاً لاستخدام authenticateUser القديم أو نعالجها هنا
+            // للأمان والسرعة، سنستخدم authenticateUser في الخطوة التالية لهذا الإجراء
         }
 
-        // 4. Authentication Check
+        // 4. Authentication Check (Legacy wrapper for older functions)
+        // نحتاج هذا الكائن للدوال التي لم نقم بتحديثها بالكامل لتقبل context
         const user = await authenticateUser(req, res);
         
         if (!user) {
             return res.status(401).json({ error: 'Unauthorized access: Invalid token or credentials' });
         }
-
-        // 5. User Management Routes (Super Admin Only)
-        // نستخدم action للتمييز بدلاً من المسار
-if (['get_users', 'add_user', 'delete_user', 'change_password', 'update_user'].includes(action)) {            
-            // استثناء: تغيير كلمة المرور مسموح للمستخدم لنفسه
-            if (user.role !== 'super_admin' && action !== 'change_password') {
-                 return res.status(403).json({ error: 'Forbidden: Admins only' });
-            }
-
-            if (action === 'get_users') return handleGetUsers(res);
-            if (action === 'add_user') return handleAddUser(req, res);
-            if (action === 'delete_user') return handleDeleteUser(req, res);
-            if (action === 'change_password') return handleChangePassword(req, res, user);
-            if (action === 'update_user') return handleUpdateUser(req, res); // <--- إضافة
+        
+        // تكملة التعامل مع تغيير كلمة المرور
+        if (action === 'change_password') {
+             return handleChangePassword(req, res, user);
         }
 
-        // 6. Lead Management Routes (CRUD for Google Sheets)
+        // 5. Lead Management Routes (CRUD for Google Sheets)
+        // هذه المسارات متاحة للجميع (Admins & Editors) مع قيود داخلية
         if (req.method === 'GET') {
-            return handleGet(req, res, user);
+            return handleGet(req, res, user); // <--- هذا ما كان محظوراً سابقاً والآن أصبح متاحاً
         } else if (req.method === 'POST') {
             return handlePost(req, res, user);
         } else if (req.method === 'PUT') {
-    // التحقق من صلاحية التعديل
-    if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
-        return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
-    }
-    return handlePut(req, res, user);
-} else if (req.method === 'DELETE') {
-    // التحقق من صلاحية الحذف (عادة نربطها بالتعديل أو نضيف صلاحية delete خاصة)
-    if (user.role !== 'super_admin') { // الحذف حصري للآدمن كما اتفقنا سابقاً، أو يمكن ربطه بـ can_edit
-         return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
-    }
-    return handleDelete(req, res, user);
+            // التحقق من صلاحية التعديل
+            if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل البيانات' });
+            }
+            return handlePut(req, res, user);
+        } else if (req.method === 'DELETE') {
+            // التحقق من صلاحية الحذف
+            if (user.role !== 'super_admin') {
+                 return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
+            }
+            return handleDelete(req, res, user);
         } else {
             return res.status(405).json({ error: 'Method not allowed' });
         }
