@@ -432,6 +432,18 @@ export default async function handler(req, res) {
             // للأمان والسرعة، سنستخدم authenticateUser في الخطوة التالية لهذا الإجراء
         }
 
+        // +++++ [إضافة جديدة: مسار إضافة المصاريف] +++++
+        if (action === 'add_spend' && req.method === 'POST') {
+            // التحقق: هل المستخدم لديه صلاحية؟ (سوبر أدمن أو محرر لديه صلاحية التعديل)
+            const canAddSpend = context.role === 'super_admin' || context.permissions.can_edit;
+            
+            if (!canAddSpend) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة مصاريف تسويقية' });
+            }
+            return handleAddSpend(req, res); // سنقوم بإنشاء هذه الدالة في الخطوة 3
+        }
+        // ++++++++++++++++++++++++++++++++++++++++++++++
+
         // 4. Authentication Check (Legacy wrapper for older functions)
         // نحتاج هذا الكائن للدوال التي لم نقم بتحديثها بالكامل لتقبل context
         const user = await authenticateUser(req, res);
@@ -472,6 +484,43 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 }
+
+// +++++ [دالة جديدة كلياً] +++++
+async function handleAddSpend(req, res) {
+    try {
+        const { date, campaign, source, spend, impressions, clicks } = req.body;
+
+        // 1. التحقق من البيانات المطلوبة
+        if (!date || !campaign || !spend) {
+            return res.status(400).json({ error: 'البيانات ناقصة: التاريخ، الحملة، والمبلغ مطلوبين' });
+        }
+
+        const doc = await getGoogleDoc();
+        const sheet = doc.sheetsByTitle["Marketing_Spend"];
+
+        // 2. التحقق من وجود الورقة
+        if (!sheet) {
+            return res.status(500).json({ error: 'ورقة Marketing_Spend غير موجودة في ملف جوجل شيت' });
+        }
+
+        // 3. إضافة الصف
+        await sheet.addRow({
+            'Date': date,
+            'Campaign': campaign,
+            'Source': source || 'Manual', // افتراضي
+            'Ad Spend': spend,
+            'Impressions': impressions || 0,
+            'Clicks': clicks || 0
+        });
+
+        return res.status(200).json({ success: true, message: 'تم إضافة المصاريف بنجاح' });
+
+    } catch (error) {
+        console.error('Add Spend Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+}
+// ++++++++++++++++++++++++++++++
 
 /**
  * ===================================================================
@@ -546,110 +595,94 @@ return res.status(200).json({
  * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
-async function handleGet(req, res, user) {
+// جلب البيانات (Leads + Marketing Spend) - محدثة
+async function handleGet(req, res, context) {
     try {
+        const { startDate, endDate, status, course, paymentMethod } = req.query;
+        
+        const doc = await getGoogleDoc();
+        
+        // 1. جلب ورقة المبيعات (Leads)
+        let leadsSheet = doc.sheetsByTitle["Leads"] || doc.sheetsByIndex[0];
+        await leadsSheet.loadHeaderRow(); 
+        const leadsRows = await leadsSheet.getRows();
 
-        // (NEW) قراءة الفلاتر من الرابط
-        const {
-            searchTerm,
-            statusFilter,
-            paymentFilter,
-            courseFilter,
-            dateFilter,
-            startDate,
-            endDate
-        } = req.query;
-
-        const sheet = await getGoogleSheet(); // Connect to sheet
-        const rows = await sheet.getRows();
-
-        let data = rows.map(row => ({
-            timestamp: row.get('Timestamp') || '',
-            inquiryId: row.get('Inquiry ID') || '',
-            customerName: row.get('Full Name') || '',
-            customerEmail: row.get('Email') || '',
-            customerPhone: row.get('Phone Number') || '',
-            course: row.get('Selected Course') || '',
-            qualification: row.get('Qualification') || '',
-            experience: row.get('Experience') || '',
-            status: row.get('Payment Status') || 'pending',
-            transactionId: row.get('Transaction ID') || '',
-            paymentMethod: row.get('Payment Method') || '',
-            cashplusCode: row.get('CashPlus Code') || '',
-            last4: row.get('Last4Digits') || '',
-            finalAmount: row.get('Amount') || 0,
-            currency: row.get('Currency') || 'MAD',
-            language: row.get('Lang') || 'ar',
-            utm_source: row.get('utm_source') || '',
-            utm_medium: row.get('utm_medium') || '',
-            utm_campaign: row.get('utm_campaign') || '',
-            utm_term: row.get('utm_term') || '',
-            utm_content: row.get('utm_content') || '',
-            // إضافة حقل التتبع الجديد للعرض أيضاً
-            lastUpdatedBy: row.get('Last Updated By') || '',
-            // (NEW) إضافة تاريخ مهيأ للفلترة
-            parsedDate: parseDate(row.get('Timestamp') || ''),
-            normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
-        }));
-// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
-        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
-        if (user.role !== 'super_admin') {
-            data = data.filter(item => item.status.toLowerCase() !== 'paid');
+        // +++++ [إضافة جديدة: جلب ورقة المصاريف] +++++
+        let spendSheet = doc.sheetsByTitle["Marketing_Spend"];
+        let spendRows = [];
+        if (spendSheet) {
+            try {
+                await spendSheet.loadHeaderRow();
+                spendRows = await spendSheet.getRows();
+            } catch (e) {
+                console.log('Spend sheet might be empty or missing headers');
+            }
         }
-        // --- (NEW) منطق الفلترة والحساب المركزي ---
+        // +++++++++++++++++++++++++++++++++++++++++++
 
-        // 1. حساب الإحصائيات الإجمالية (دائماً)
-        const overallStats = calculateStatistics(data);
+        // دوال مساعدة للتاريخ
+        const parseDate = (dateStr) => {
+            if (!dateStr) return null;
+            const parts = dateStr.split(' ')[0].split('/'); 
+            if (parts.length === 3) return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+            return new Date(dateStr);
+        };
 
-        // 2. التحقق إذا كانت هناك فلاتر نشطة
-        const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
+        const start = startDate ? new Date(startDate) : null;
+        const end = endDate ? new Date(endDate) : null;
 
-        let filteredData = data;
-        let filteredStats = overallStats;
+        // فلترة Leads (كما كانت سابقاً)
+        let filteredLeads = leadsRows.map(row => {
+            const rowData = row.toObject();
+            rowData.rowIndex = row.rowNumber;
+            return rowData;
+        }).filter(row => {
+            const rowDate = parseDate(row['Timestamp']);
+            if (start && rowDate && rowDate < start) return false;
+            if (end && rowDate && rowDate > end) return false;
+            if (status && row['Payment Status'] !== status) return false;
+            if (course && row['Selected Course'] !== course) return false;
+            if (paymentMethod && row['Payment Method'] !== paymentMethod) return false;
+            return true;
+        });
 
-        if (isFiltered) {
-            // 3. تطبيق الفلاتر
-            filteredData = data.filter(item => {
-                const search = searchTerm ? searchTerm.toLowerCase() : '';
-                const matchesSearch = !search ||
-                    Object.values(item).some(val =>
-                        String(val).toLowerCase().includes(search)
-                    );
-                const matchesStatus = !statusFilter || item.status === statusFilter;
-                const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
-                const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
-                const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
+        // +++++ [إضافة جديدة: فلترة المصاريف حسب التاريخ] +++++
+        let filteredSpend = spendRows.map(row => row.toObject()).filter(row => {
+            const rowDate = parseDate(row['Date']); 
+            if (start && rowDate && rowDate < start) return false;
+            if (end && rowDate && rowDate > end) return false;
+            return true;
+        });
+        // +++++++++++++++++++++++++++++++++++++++++++++++++++
 
-                return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
-            });
+        // إخفاء البيانات الحساسة (للأمان)
+        const isSuperAdmin = context.role === 'super_admin';
+        const canViewStats = context.permissions.can_view_stats;
 
-            // 4. حساب الإحصائيات المفلترة
-            filteredStats = calculateStatistics(filteredData);
+        if (!isSuperAdmin && !canViewStats) {
+            filteredLeads = filteredLeads.map(item => ({ 
+                ...item, Amount: '***', 'Transaction ID': '***' 
+            }));
+            // ملاحظة: المصاريف التسويقية عادة ليست حساسة جداً، لكن يمكنك إخفاؤها هنا بنفس الطريقة إذا أردت
         }
 
-        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات + (هام) تحديث بيانات المستخدم
+        // إرسال الرد
         res.status(200).json({
             success: true,
-            statistics: {
-                overall: overallStats,
-                filtered: filteredStats
-            },
-            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
-            isFiltered: isFiltered,
-            // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
-            // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
+            data: filteredLeads,
+            marketingSpend: filteredSpend, // <--- إرسال المصفوفة الجديدة هنا
+            isFiltered: !!(startDate || endDate || status || course),
             currentUser: { 
-                email: user.email, 
-                role: user.role,
-                // نرسل الصلاحيات أيضاً لضمان التزامن
-                permissions: user.permissions || { can_edit: false, can_view_stats: false },
-                is_frozen: user.is_frozen || false // نحتاج معرفة إذا تم تجميده
+                email: context.email, 
+                role: context.role,
+                permissions: context.permissions,
+                is_frozen: false 
             } 
         });
 
     } catch (error) {
-        console.error('Admin GET API Error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Get Data Error:', error);
+        res.status(500).json({ error: error.message });
     }
 }
 
