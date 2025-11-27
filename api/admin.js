@@ -596,101 +596,155 @@ return res.status(200).json({
  * ===================================================================
  */
 // جلب البيانات (Leads + Marketing Spend) - محدثة
+// دالة handleGet (النسخة الآمنة: منطق قديم + ميزات جديدة)
 async function handleGet(req, res, context) {
     try {
         const { startDate, endDate, status, course, paymentMethod } = req.query;
         
+        // 1. استخدام getGoogleDoc بدلاً من getGoogleSheet للوصول لكل الأوراق
         const doc = await getGoogleDoc();
         
-        // 1. محاولة ذكية لجلب ورقة المبيعات (Leads)
-        // نحاول البحث بالاسم الدقيق، وإذا فشل نبحث عن أي ورقة تحتوي على كلمة Leads
-        let leadsSheet = doc.sheetsByTitle["Leads"];
-        
-        if (!leadsSheet) {
-            // بحث مرن في حال وجود مسافات زائدة في الاسم
-            leadsSheet = doc.sheetsByIndex.find(s => s.title.includes("Lead"));
+        // --- [المنطق القديم] الوصول لورقة Leads ---
+        let sheet = doc.sheetsByTitle["Leads"];
+        if (!sheet) {
+            sheet = doc.sheetsByIndex[0];
         }
-        
-        if (!leadsSheet) {
-            // الملاذ الأخير: الورقة الأولى، لكن نطبع تحذيراً
-            console.warn('[Warning] Could not find "Leads" sheet. Using first sheet.');
-            leadsSheet = doc.sheetsByIndex[0];
-        }
+        await sheet.loadHeaderRow();
+        const rows = await sheet.getRows();
 
-        console.log(`[Debug] Reading Leads from sheet: "${leadsSheet.title}"`);
-        await leadsSheet.loadHeaderRow(); 
-        const leadsRows = await leadsSheet.getRows();
-        console.log(`[Debug] Found ${leadsRows.length} lead rows.`);
-
-        // 2. جلب ورقة المصاريف
+        // --- [إضافة جديدة] الوصول لورقة المصاريف (دون التأثير على القديم) ---
         let spendSheet = doc.sheetsByTitle["Marketing_Spend"];
         let spendRows = [];
         if (spendSheet) {
             try {
                 await spendSheet.loadHeaderRow();
-                spendRows = await spendSheet.getRows();
+                const rawSpendRows = await spendSheet.getRows();
+                // تحويل بسيط لبيانات المصاريف
+                spendRows = rawSpendRows.map(r => r.toObject());
             } catch (e) {
-                console.log('[Info] Marketing_Spend sheet exists but might be empty.');
+                console.log('Spend sheet empty or missing');
+            }
+        }
+        // -----------------------------------------------------------
+
+        // --- [المنطق القديم] مصفوفات ومعالجة البيانات ---
+        let filteredData = [];
+        let overallStats = {
+            totalRevenue: 0,
+            totalTransactions: 0,
+            successfulOperations: 0,
+            pendingOperations: 0,
+            failedOperations: 0,
+            canceledOperations: 0
+        };
+        let filteredStats = { ...overallStats };
+
+        // تحضير تواريخ الفلترة
+        const filterStart = startDate ? new Date(startDate) : null;
+        const filterEnd = endDate ? new Date(endDate) : null;
+        if (filterEnd) filterEnd.setHours(23, 59, 59, 999);
+
+        // --- [المنطق القديم] التكرار والحساب (أعدته كما كان تماماً) ---
+        for (const row of rows) {
+            const rowData = row.toObject();
+            rowData.rowIndex = row.rowNumber; // نحتاجها للحذف والتعديل
+
+            // تنظيف المبلغ
+            let amountStr = row.get('Amount') || '0';
+            if (typeof amountStr === 'string') {
+                amountStr = amountStr.replace(/[^\d.-]/g, '');
+            }
+            const amount = parseFloat(amountStr) || 0;
+            const currentStatus = row.get('Payment Status');
+
+            // 1. حساب الإحصائيات العامة (قبل الفلترة)
+            overallStats.totalTransactions++;
+            if (currentStatus === 'Paid') {
+                overallStats.successfulOperations++;
+                overallStats.totalRevenue += amount;
+            } else if (currentStatus === 'Pending') {
+                overallStats.pendingOperations++;
+            } else if (currentStatus === 'Failed') {
+                overallStats.failedOperations++;
+            } else if (currentStatus === 'Canceled') {
+                overallStats.canceledOperations++;
+            }
+
+            // 2. تطبيق الفلترة (المنطق القديم لمعالجة التاريخ)
+            let matchesFilter = true;
+
+            // معالجة التاريخ المعقدة (كما كانت في ملفك الأصلي)
+            const timestampStr = row.get('Timestamp');
+            let rowDate = null;
+            if (timestampStr) {
+                const datePart = timestampStr.split(' ')[0];
+                if (datePart.includes('/')) {
+                    const parts = datePart.split('/');
+                    if (parts.length === 3) {
+                        rowDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+                    }
+                } else {
+                    rowDate = new Date(datePart);
+                }
+            }
+
+            // شروط الفلترة
+            if (filterStart && (!rowDate || rowDate < filterStart)) matchesFilter = false;
+            if (filterEnd && (!rowDate || rowDate > filterEnd)) matchesFilter = false;
+            if (status && currentStatus !== status) matchesFilter = false;
+            if (course && row.get('Selected Course') !== course) matchesFilter = false;
+            if (paymentMethod && row.get('Payment Method') !== paymentMethod) matchesFilter = false;
+
+            if (matchesFilter) {
+                // إخفاء البيانات الحساسة لغير الأدمن (باستخدام Context الجديد)
+                const isSuper = context?.role === 'super_admin';
+                const canView = context?.permissions?.can_view_stats;
+                
+                if (!isSuper && !canView) {
+                    rowData['Amount'] = '***';
+                    rowData['Transaction ID'] = '***';
+                }
+
+                filteredData.push(rowData);
+
+                // حساب إحصائيات ما بعد الفلترة
+                filteredStats.totalTransactions++;
+                if (currentStatus === 'Paid') {
+                    filteredStats.successfulOperations++;
+                    filteredStats.totalRevenue += amount;
+                } else if (currentStatus === 'Pending') {
+                    filteredStats.pendingOperations++;
+                } else if (currentStatus === 'Failed') {
+                    filteredStats.failedOperations++;
+                } else if (currentStatus === 'Canceled') {
+                    filteredStats.canceledOperations++;
+                }
             }
         }
 
-        // تحضير التواريخ
-        const parseDate = (dateStr) => {
-            if (!dateStr) return null;
-            const parts = dateStr.split(' ')[0].split('/'); 
-            if (parts.length === 3) return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-            return new Date(dateStr);
-        };
+        // تحديد هل هناك فلترة مفعلة
+        const isFiltered = !!(startDate || endDate || status || course || paymentMethod);
 
-        const start = startDate ? new Date(startDate) : null;
-        const end = endDate ? new Date(endDate) : null;
-
-        // فلترة Leads
-        let filteredLeads = leadsRows.map(row => {
-            const rowData = row.toObject();
-            rowData.rowIndex = row.rowNumber;
-            return rowData;
-        }).filter(row => {
-            const rowDate = parseDate(row['Timestamp']);
-            if (start && rowDate && rowDate < start) return false;
-            if (end && rowDate && rowDate > end) return false;
-            if (status && row['Payment Status'] !== status) return false;
-            if (course && row['Selected Course'] !== course) return false;
-            if (paymentMethod && row['Payment Method'] !== paymentMethod) return false;
-            return true;
-        });
-
-        // فلترة Spend
-        let filteredSpend = spendRows.map(row => row.toObject()).filter(row => {
-            const rowDate = parseDate(row['Date']); 
-            if (start && rowDate && rowDate < start) return false;
-            if (end && rowDate && rowDate > end) return false;
-            return true;
-        });
-
-        // التحقق من الصلاحيات (مع حماية ضد الأخطاء)
-        // إذا كان context غير موجود (اتصال قديم)، نفترض أنه أدمن مؤقتاً لتفادي حجب البيانات عنك
-        const role = context?.role || 'super_admin'; 
-        const perms = context?.permissions || { can_view_stats: true };
-
-        const isSuperAdmin = role === 'super_admin';
-        const canViewStats = perms.can_view_stats;
-
-        if (!isSuperAdmin && !canViewStats) {
-            filteredLeads = filteredLeads.map(item => ({ 
-                ...item, Amount: '***', 'Transaction ID': '***' 
-            }));
-        }
-
+        // --- إرسال الرد (شامل كل شيء) ---
         res.status(200).json({
             success: true,
-            data: filteredLeads,
-            marketingSpend: filteredSpend,
-            isFiltered: !!(startDate || endDate || status || course),
+            // نعيد الإحصائيات التي كانت مفقودة
+            statistics: {
+                overall: overallStats,
+                filtered: filteredStats
+            },
+            data: filteredData.sort((a, b) => {
+                 // ترتيب بسيط حسب التاريخ
+                 return (b.rowIndex || 0) - (a.rowIndex || 0);
+            }),
+            // البيانات الجديدة
+            marketingSpend: spendRows,
+            isFiltered: isFiltered,
+            // بيانات المستخدم للمزامنة
             currentUser: { 
-                email: context?.email || 'admin', 
-                role: role,
-                permissions: perms,
+                email: context?.email, 
+                role: context?.role,
+                permissions: context?.permissions || { can_edit: false, can_view_stats: false },
                 is_frozen: false 
             } 
         });
