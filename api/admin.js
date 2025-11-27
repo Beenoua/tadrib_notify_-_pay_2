@@ -432,18 +432,6 @@ export default async function handler(req, res) {
             // للأمان والسرعة، سنستخدم authenticateUser في الخطوة التالية لهذا الإجراء
         }
 
-        // +++++ [إضافة جديدة: مسار إضافة المصاريف] +++++
-        if (action === 'add_spend' && req.method === 'POST') {
-            // التحقق: هل المستخدم لديه صلاحية؟ (سوبر أدمن أو محرر لديه صلاحية التعديل)
-            const canAddSpend = context.role === 'super_admin' || context.permissions.can_edit;
-            
-            if (!canAddSpend) {
-                return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة مصاريف تسويقية' });
-            }
-            return handleAddSpend(req, res); // سنقوم بإنشاء هذه الدالة في الخطوة 3
-        }
-        // ++++++++++++++++++++++++++++++++++++++++++++++
-
         // 4. Authentication Check (Legacy wrapper for older functions)
         // نحتاج هذا الكائن للدوال التي لم نقم بتحديثها بالكامل لتقبل context
         const user = await authenticateUser(req, res);
@@ -484,43 +472,6 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 }
-
-// +++++ [دالة جديدة كلياً] +++++
-async function handleAddSpend(req, res) {
-    try {
-        const { date, campaign, source, spend, impressions, clicks } = req.body;
-
-        // 1. التحقق من البيانات المطلوبة
-        if (!date || !campaign || !spend) {
-            return res.status(400).json({ error: 'البيانات ناقصة: التاريخ، الحملة، والمبلغ مطلوبين' });
-        }
-
-        const doc = await getGoogleDoc();
-        const sheet = doc.sheetsByTitle["Marketing_Spend"];
-
-        // 2. التحقق من وجود الورقة
-        if (!sheet) {
-            return res.status(500).json({ error: 'ورقة Marketing_Spend غير موجودة في ملف جوجل شيت' });
-        }
-
-        // 3. إضافة الصف
-        await sheet.addRow({
-            'Date': date,
-            'Campaign': campaign,
-            'Source': source || 'Manual', // افتراضي
-            'Ad Spend': spend,
-            'Impressions': impressions || 0,
-            'Clicks': clicks || 0
-        });
-
-        return res.status(200).json({ success: true, message: 'تم إضافة المصاريف بنجاح' });
-
-    } catch (error) {
-        console.error('Add Spend Error:', error);
-        return res.status(500).json({ error: error.message });
-    }
-}
-// ++++++++++++++++++++++++++++++
 
 /**
  * ===================================================================
@@ -595,163 +546,110 @@ return res.status(200).json({
  * (GET) Fetches records and statistics (MODIFIED)
  * ===================================================================
  */
-// جلب البيانات (Leads + Marketing Spend) - محدثة
-// دالة handleGet (النسخة الآمنة: منطق قديم + ميزات جديدة)
-async function handleGet(req, res, context) {
+async function handleGet(req, res, user) {
     try {
-        const { startDate, endDate, status, course, paymentMethod } = req.query;
-        
-        // 1. استخدام getGoogleDoc بدلاً من getGoogleSheet للوصول لكل الأوراق
-        const doc = await getGoogleDoc();
-        
-        // --- [المنطق القديم] الوصول لورقة Leads ---
-        let sheet = doc.sheetsByTitle["Leads"];
-        if (!sheet) {
-            sheet = doc.sheetsByIndex[0];
-        }
-        await sheet.loadHeaderRow();
+
+        // (NEW) قراءة الفلاتر من الرابط
+        const {
+            searchTerm,
+            statusFilter,
+            paymentFilter,
+            courseFilter,
+            dateFilter,
+            startDate,
+            endDate
+        } = req.query;
+
+        const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
-        // --- [إضافة جديدة] الوصول لورقة المصاريف (دون التأثير على القديم) ---
-        let spendSheet = doc.sheetsByTitle["Marketing_Spend"];
-        let spendRows = [];
-        if (spendSheet) {
-            try {
-                await spendSheet.loadHeaderRow();
-                const rawSpendRows = await spendSheet.getRows();
-                // تحويل بسيط لبيانات المصاريف
-                spendRows = rawSpendRows.map(r => r.toObject());
-            } catch (e) {
-                console.log('Spend sheet empty or missing');
-            }
+        let data = rows.map(row => ({
+            timestamp: row.get('Timestamp') || '',
+            inquiryId: row.get('Inquiry ID') || '',
+            customerName: row.get('Full Name') || '',
+            customerEmail: row.get('Email') || '',
+            customerPhone: row.get('Phone Number') || '',
+            course: row.get('Selected Course') || '',
+            qualification: row.get('Qualification') || '',
+            experience: row.get('Experience') || '',
+            status: row.get('Payment Status') || 'pending',
+            transactionId: row.get('Transaction ID') || '',
+            paymentMethod: row.get('Payment Method') || '',
+            cashplusCode: row.get('CashPlus Code') || '',
+            last4: row.get('Last4Digits') || '',
+            finalAmount: row.get('Amount') || 0,
+            currency: row.get('Currency') || 'MAD',
+            language: row.get('Lang') || 'ar',
+            utm_source: row.get('utm_source') || '',
+            utm_medium: row.get('utm_medium') || '',
+            utm_campaign: row.get('utm_campaign') || '',
+            utm_term: row.get('utm_term') || '',
+            utm_content: row.get('utm_content') || '',
+            // إضافة حقل التتبع الجديد للعرض أيضاً
+            lastUpdatedBy: row.get('Last Updated By') || '',
+            // (NEW) إضافة تاريخ مهيأ للفلترة
+            parsedDate: parseDate(row.get('Timestamp') || ''),
+            normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
+        }));
+// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
+        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
+        if (user.role !== 'super_admin') {
+            data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
-        // -----------------------------------------------------------
+        // --- (NEW) منطق الفلترة والحساب المركزي ---
 
-        // --- [المنطق القديم] مصفوفات ومعالجة البيانات ---
-        let filteredData = [];
-        let overallStats = {
-            totalRevenue: 0,
-            totalTransactions: 0,
-            successfulOperations: 0,
-            pendingOperations: 0,
-            failedOperations: 0,
-            canceledOperations: 0
-        };
-        let filteredStats = { ...overallStats };
+        // 1. حساب الإحصائيات الإجمالية (دائماً)
+        const overallStats = calculateStatistics(data);
 
-        // تحضير تواريخ الفلترة
-        const filterStart = startDate ? new Date(startDate) : null;
-        const filterEnd = endDate ? new Date(endDate) : null;
-        if (filterEnd) filterEnd.setHours(23, 59, 59, 999);
+        // 2. التحقق إذا كانت هناك فلاتر نشطة
+        const isFiltered = !!(searchTerm || statusFilter || paymentFilter || (dateFilter && dateFilter !== 'all'));
 
-        // --- [المنطق القديم] التكرار والحساب (أعدته كما كان تماماً) ---
-        for (const row of rows) {
-            const rowData = row.toObject();
-            rowData.rowIndex = row.rowNumber; // نحتاجها للحذف والتعديل
+        let filteredData = data;
+        let filteredStats = overallStats;
 
-            // تنظيف المبلغ
-            let amountStr = row.get('Amount') || '0';
-            if (typeof amountStr === 'string') {
-                amountStr = amountStr.replace(/[^\d.-]/g, '');
-            }
-            const amount = parseFloat(amountStr) || 0;
-            const currentStatus = row.get('Payment Status');
+        if (isFiltered) {
+            // 3. تطبيق الفلاتر
+            filteredData = data.filter(item => {
+                const search = searchTerm ? searchTerm.toLowerCase() : '';
+                const matchesSearch = !search ||
+                    Object.values(item).some(val =>
+                        String(val).toLowerCase().includes(search)
+                    );
+                const matchesStatus = !statusFilter || item.status === statusFilter;
+                const matchesPayment = !paymentFilter || item.paymentMethod === paymentFilter;
+                const matchesCourse = !courseFilter || courseFilter === '' || (item.normalizedCourse && item.normalizedCourse === courseFilter);
+                const matchesDate = checkDateFilter(item, dateFilter, startDate, endDate);
 
-            // 1. حساب الإحصائيات العامة (قبل الفلترة)
-            overallStats.totalTransactions++;
-            if (currentStatus === 'Paid') {
-                overallStats.successfulOperations++;
-                overallStats.totalRevenue += amount;
-            } else if (currentStatus === 'Pending') {
-                overallStats.pendingOperations++;
-            } else if (currentStatus === 'Failed') {
-                overallStats.failedOperations++;
-            } else if (currentStatus === 'Canceled') {
-                overallStats.canceledOperations++;
-            }
+                return matchesSearch && matchesStatus && matchesPayment && matchesCourse && matchesDate;
+            });
 
-            // 2. تطبيق الفلترة (المنطق القديم لمعالجة التاريخ)
-            let matchesFilter = true;
-
-            // معالجة التاريخ المعقدة (كما كانت في ملفك الأصلي)
-            const timestampStr = row.get('Timestamp');
-            let rowDate = null;
-            if (timestampStr) {
-                const datePart = timestampStr.split(' ')[0];
-                if (datePart.includes('/')) {
-                    const parts = datePart.split('/');
-                    if (parts.length === 3) {
-                        rowDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
-                    }
-                } else {
-                    rowDate = new Date(datePart);
-                }
-            }
-
-            // شروط الفلترة
-            if (filterStart && (!rowDate || rowDate < filterStart)) matchesFilter = false;
-            if (filterEnd && (!rowDate || rowDate > filterEnd)) matchesFilter = false;
-            if (status && currentStatus !== status) matchesFilter = false;
-            if (course && row.get('Selected Course') !== course) matchesFilter = false;
-            if (paymentMethod && row.get('Payment Method') !== paymentMethod) matchesFilter = false;
-
-            if (matchesFilter) {
-                // إخفاء البيانات الحساسة لغير الأدمن (باستخدام Context الجديد)
-                const isSuper = context?.role === 'super_admin';
-                const canView = context?.permissions?.can_view_stats;
-                
-                if (!isSuper && !canView) {
-                    rowData['Amount'] = '***';
-                    rowData['Transaction ID'] = '***';
-                }
-
-                filteredData.push(rowData);
-
-                // حساب إحصائيات ما بعد الفلترة
-                filteredStats.totalTransactions++;
-                if (currentStatus === 'Paid') {
-                    filteredStats.successfulOperations++;
-                    filteredStats.totalRevenue += amount;
-                } else if (currentStatus === 'Pending') {
-                    filteredStats.pendingOperations++;
-                } else if (currentStatus === 'Failed') {
-                    filteredStats.failedOperations++;
-                } else if (currentStatus === 'Canceled') {
-                    filteredStats.canceledOperations++;
-                }
-            }
+            // 4. حساب الإحصائيات المفلترة
+            filteredStats = calculateStatistics(filteredData);
         }
 
-        // تحديد هل هناك فلترة مفعلة
-        const isFiltered = !!(startDate || endDate || status || course || paymentMethod);
-
-        // --- إرسال الرد (شامل كل شيء) ---
+        // 5. إرجاع البيانات المفلترة + كلا الإحصائيات + (هام) تحديث بيانات المستخدم
         res.status(200).json({
             success: true,
-            // نعيد الإحصائيات التي كانت مفقودة
             statistics: {
                 overall: overallStats,
                 filtered: filteredStats
             },
-            data: filteredData.sort((a, b) => {
-                 // ترتيب بسيط حسب التاريخ
-                 return (b.rowIndex || 0) - (a.rowIndex || 0);
-            }),
-            // البيانات الجديدة
-            marketingSpend: spendRows,
+            data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
             isFiltered: isFiltered,
-            // بيانات المستخدم للمزامنة
+            // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
+            // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
             currentUser: { 
-                email: context?.email, 
-                role: context?.role,
-                permissions: context?.permissions || { can_edit: false, can_view_stats: false },
-                is_frozen: false 
+                email: user.email, 
+                role: user.role,
+                // نرسل الصلاحيات أيضاً لضمان التزامن
+                permissions: user.permissions || { can_edit: false, can_view_stats: false },
+                is_frozen: user.is_frozen || false // نحتاج معرفة إذا تم تجميده
             } 
         });
 
     } catch (error) {
-        console.error('Get Data Error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Admin GET API Error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }
 
@@ -1063,33 +961,6 @@ async function getGoogleSheet() {
 
     return sheet;
 }
-
-// +++++ [دالة مساعدة جديدة مطلوبة] +++++
-// هذه الدالة تتصل بملف جوجل شيت كاملاً لتمكننا من اختيار الورقة المناسبة (Leads أو Marketing_Spend)
-async function getGoogleDoc() {
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-        throw new Error('Configuration Error: Missing Google Sheets credentials.');
-    }
-
-    const serviceAccountAuth = new JWT({
-        email: serviceAccountEmail,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    
-    // تحميل معلومات الملف (أسماء الأوراق، إلخ)
-    await doc.loadInfo();
-    console.log(`[GoogleSheets] Connected to doc: "${doc.title}"`);
-    
-    return doc;
-}
-// ++++++++++++++++++++++++++++++++++++++
 
 /**
  * ===================================================================
