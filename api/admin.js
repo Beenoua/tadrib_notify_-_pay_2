@@ -995,6 +995,33 @@ async function getGoogleSheet() {
     return sheet;
 }
 
+// +++++ [دالة مساعدة جديدة مطلوبة] +++++
+// هذه الدالة تتصل بملف جوجل شيت كاملاً لتمكننا من اختيار الورقة المناسبة (Leads أو Marketing_Spend)
+async function getGoogleDoc() {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+        throw new Error('Configuration Error: Missing Google Sheets credentials.');
+    }
+
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    
+    // تحميل معلومات الملف (أسماء الأوراق، إلخ)
+    await doc.loadInfo();
+    console.log(`[GoogleSheets] Connected to doc: "${doc.title}"`);
+    
+    return doc;
+}
+// ++++++++++++++++++++++++++++++++++++++
+
 /**
  * ===================================================================
  * (POST) Logout - clears the session cookie
