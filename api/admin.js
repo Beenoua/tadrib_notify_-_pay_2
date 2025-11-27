@@ -432,15 +432,6 @@ export default async function handler(req, res) {
             // للأمان والسرعة، سنستخدم authenticateUser في الخطوة التالية لهذا الإجراء
         }
 
-        // [جديد] مسار إضافة المصاريف
-        if (action === 'add_spend' && req.method === 'POST') {
-             // السماح للأدمن ومن لديه صلاحية التعديل
-            const canAdd = context.role === 'super_admin' || context.permissions.can_edit;
-            if (!canAdd) return res.status(403).json({ error: 'غير مصرح لك بإضافة مصاريف' });
-            
-            return handleAddSpend(req, res);
-        }
-
         // 4. Authentication Check (Legacy wrapper for older functions)
         // نحتاج هذا الكائن للدوال التي لم نقم بتحديثها بالكامل لتقبل context
         const user = await authenticateUser(req, res);
@@ -572,23 +563,6 @@ async function handleGet(req, res, user) {
         const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
-        // =========================================================
-        // [إضافة 1] جلب بيانات المصاريف (دون التأثير على المبيعات)
-        // =========================================================
-        let spendRows = [];
-        try {
-            // نحاول جلب الورقة بالاسم
-            const spendSheet = doc.sheetsByTitle["Marketing_Spend"];
-            if (spendSheet) {
-                await spendSheet.loadHeaderRow(); // تأكد من وجود العناوين
-                const rawSpend = await spendSheet.getRows();
-                spendRows = rawSpend.map(r => r.toObject()); // تحويل لبيانات نظيفة
-            }
-        } catch (e) {
-            console.log('Marketing_Spend info: Sheet empty or not found (Safe to ignore)');
-        }
-        // =========================================================
-
         let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
             inquiryId: row.get('Inquiry ID') || '',
@@ -661,7 +635,6 @@ async function handleGet(req, res, user) {
                 filtered: filteredStats
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
-            marketingSpend: spendRows,
             isFiltered: isFiltered,
             // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
             // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
@@ -989,28 +962,6 @@ async function getGoogleSheet() {
     return sheet;
 }
 
-// [جديد] دالة مساعدة للاتصال بملف جوجل شيت كاملاً
-async function getGoogleDoc() {
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
-        throw new Error('Configuration Error: Missing Google Sheets credentials.');
-    }
-
-    const serviceAccountAuth = new JWT({
-        email: serviceAccountEmail,
-        key: privateKey,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
-    await doc.loadInfo();
-    // console.log(`[GoogleSheets] Connected to doc: "${doc.title}"`);
-    return doc;
-}
-
 /**
  * ===================================================================
  * (POST) Logout - clears the session cookie
@@ -1054,37 +1005,4 @@ function normalizeCourseName(raw) {
         }
     }
     return 'دورات أخرى';
-}
-
-// [جديد] دالة لإضافة مصاريف تسويقية
-async function handleAddSpend(req, res) {
-    try {
-        const { date, campaign, source, spend, impressions, clicks } = req.body;
-
-        if (!date || !campaign || !spend) {
-            return res.status(400).json({ error: 'البيانات ناقصة: التاريخ، الحملة، والمبلغ مطلوبين' });
-        }
-
-        const doc = await getGoogleDoc();
-        const sheet = doc.sheetsByTitle["Marketing_Spend"];
-
-        if (!sheet) {
-            return res.status(500).json({ error: 'ورقة Marketing_Spend غير موجودة' });
-        }
-
-        await sheet.addRow({
-            'Date': date,
-            'Campaign': campaign,
-            'Source': source || 'Manual',
-            'Ad Spend': spend,
-            'Impressions': impressions || 0,
-            'Clicks': clicks || 0
-        });
-
-        return res.status(200).json({ success: true, message: 'تم حفظ المصاريف بنجاح' });
-
-    } catch (error) {
-        console.error('Add Spend Error:', error);
-        return res.status(500).json({ error: error.message });
-    }
 }
