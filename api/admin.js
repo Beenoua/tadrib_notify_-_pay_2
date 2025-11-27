@@ -656,8 +656,10 @@ async function handleGet(req, res, context) {
         // +++++++++++++++++++++++++++++++++++++++++++++++++++
 
         // إخفاء البيانات الحساسة (للأمان)
-        const isSuperAdmin = context.role === 'super_admin';
-        const canViewStats = context.permissions.can_view_stats;
+        const isSuperAdmin = context?.role === 'super_admin';
+        
+        // إذا لم يكن كائن permissions موجوداً، نعتبر الصلاحية false
+        const canViewStats = context?.permissions?.can_view_stats || false;
 
         if (!isSuperAdmin && !canViewStats) {
             filteredLeads = filteredLeads.map(item => ({ 
@@ -675,8 +677,8 @@ async function handleGet(req, res, context) {
             currentUser: { 
                 email: context.email, 
                 role: context.role,
-                permissions: context.permissions,
-                is_frozen: false 
+                permissions: context?.permissions || { can_edit: false, can_view_stats: false },
+                is_frozen: false
             } 
         });
 
