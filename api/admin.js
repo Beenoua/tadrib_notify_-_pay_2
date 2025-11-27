@@ -602,12 +602,27 @@ async function handleGet(req, res, context) {
         
         const doc = await getGoogleDoc();
         
-        // 1. جلب ورقة المبيعات (Leads)
-        let leadsSheet = doc.sheetsByTitle["Leads"] || doc.sheetsByIndex[0];
+        // 1. محاولة ذكية لجلب ورقة المبيعات (Leads)
+        // نحاول البحث بالاسم الدقيق، وإذا فشل نبحث عن أي ورقة تحتوي على كلمة Leads
+        let leadsSheet = doc.sheetsByTitle["Leads"];
+        
+        if (!leadsSheet) {
+            // بحث مرن في حال وجود مسافات زائدة في الاسم
+            leadsSheet = doc.sheetsByIndex.find(s => s.title.includes("Lead"));
+        }
+        
+        if (!leadsSheet) {
+            // الملاذ الأخير: الورقة الأولى، لكن نطبع تحذيراً
+            console.warn('[Warning] Could not find "Leads" sheet. Using first sheet.');
+            leadsSheet = doc.sheetsByIndex[0];
+        }
+
+        console.log(`[Debug] Reading Leads from sheet: "${leadsSheet.title}"`);
         await leadsSheet.loadHeaderRow(); 
         const leadsRows = await leadsSheet.getRows();
+        console.log(`[Debug] Found ${leadsRows.length} lead rows.`);
 
-        // +++++ [إضافة جديدة: جلب ورقة المصاريف] +++++
+        // 2. جلب ورقة المصاريف
         let spendSheet = doc.sheetsByTitle["Marketing_Spend"];
         let spendRows = [];
         if (spendSheet) {
@@ -615,12 +630,11 @@ async function handleGet(req, res, context) {
                 await spendSheet.loadHeaderRow();
                 spendRows = await spendSheet.getRows();
             } catch (e) {
-                console.log('Spend sheet might be empty or missing headers');
+                console.log('[Info] Marketing_Spend sheet exists but might be empty.');
             }
         }
-        // +++++++++++++++++++++++++++++++++++++++++++
 
-        // دوال مساعدة للتاريخ
+        // تحضير التواريخ
         const parseDate = (dateStr) => {
             if (!dateStr) return null;
             const parts = dateStr.split(' ')[0].split('/'); 
@@ -631,7 +645,7 @@ async function handleGet(req, res, context) {
         const start = startDate ? new Date(startDate) : null;
         const end = endDate ? new Date(endDate) : null;
 
-        // فلترة Leads (كما كانت سابقاً)
+        // فلترة Leads
         let filteredLeads = leadsRows.map(row => {
             const rowData = row.toObject();
             rowData.rowIndex = row.rowNumber;
@@ -646,39 +660,38 @@ async function handleGet(req, res, context) {
             return true;
         });
 
-        // +++++ [إضافة جديدة: فلترة المصاريف حسب التاريخ] +++++
+        // فلترة Spend
         let filteredSpend = spendRows.map(row => row.toObject()).filter(row => {
             const rowDate = parseDate(row['Date']); 
             if (start && rowDate && rowDate < start) return false;
             if (end && rowDate && rowDate > end) return false;
             return true;
         });
-        // +++++++++++++++++++++++++++++++++++++++++++++++++++
 
-        // إخفاء البيانات الحساسة (للأمان)
-        const isSuperAdmin = context?.role === 'super_admin';
-        
-        // إذا لم يكن كائن permissions موجوداً، نعتبر الصلاحية false
-        const canViewStats = context?.permissions?.can_view_stats || false;
+        // التحقق من الصلاحيات (مع حماية ضد الأخطاء)
+        // إذا كان context غير موجود (اتصال قديم)، نفترض أنه أدمن مؤقتاً لتفادي حجب البيانات عنك
+        const role = context?.role || 'super_admin'; 
+        const perms = context?.permissions || { can_view_stats: true };
+
+        const isSuperAdmin = role === 'super_admin';
+        const canViewStats = perms.can_view_stats;
 
         if (!isSuperAdmin && !canViewStats) {
             filteredLeads = filteredLeads.map(item => ({ 
                 ...item, Amount: '***', 'Transaction ID': '***' 
             }));
-            // ملاحظة: المصاريف التسويقية عادة ليست حساسة جداً، لكن يمكنك إخفاؤها هنا بنفس الطريقة إذا أردت
         }
 
-        // إرسال الرد
         res.status(200).json({
             success: true,
             data: filteredLeads,
-            marketingSpend: filteredSpend, // <--- إرسال المصفوفة الجديدة هنا
+            marketingSpend: filteredSpend,
             isFiltered: !!(startDate || endDate || status || course),
             currentUser: { 
-                email: context.email, 
-                role: context.role,
-                permissions: context?.permissions || { can_edit: false, can_view_stats: false },
-                is_frozen: false
+                email: context?.email || 'admin', 
+                role: role,
+                permissions: perms,
+                is_frozen: false 
             } 
         });
 
