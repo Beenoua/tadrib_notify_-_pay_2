@@ -572,6 +572,23 @@ async function handleGet(req, res, user) {
         const sheet = await getGoogleSheet(); // Connect to sheet
         const rows = await sheet.getRows();
 
+        // =========================================================
+        // [إضافة 1] جلب بيانات المصاريف (دون التأثير على المبيعات)
+        // =========================================================
+        let spendRows = [];
+        try {
+            // نحاول جلب الورقة بالاسم
+            const spendSheet = doc.sheetsByTitle["Marketing_Spend"];
+            if (spendSheet) {
+                await spendSheet.loadHeaderRow(); // تأكد من وجود العناوين
+                const rawSpend = await spendSheet.getRows();
+                spendRows = rawSpend.map(r => r.toObject()); // تحويل لبيانات نظيفة
+            }
+        } catch (e) {
+            console.log('Marketing_Spend info: Sheet empty or not found (Safe to ignore)');
+        }
+        // =========================================================
+
         let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
             inquiryId: row.get('Inquiry ID') || '',
@@ -644,6 +661,7 @@ async function handleGet(req, res, user) {
                 filtered: filteredStats
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
+            marketingSpend: spendRows,
             isFiltered: isFiltered,
             // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
             // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
