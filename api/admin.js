@@ -432,6 +432,15 @@ export default async function handler(req, res) {
             // للأمان والسرعة، سنستخدم authenticateUser في الخطوة التالية لهذا الإجراء
         }
 
+        // [جديد] مسار إضافة المصاريف
+        if (action === 'add_spend' && req.method === 'POST') {
+             // السماح للأدمن ومن لديه صلاحية التعديل
+            const canAdd = context.role === 'super_admin' || context.permissions.can_edit;
+            if (!canAdd) return res.status(403).json({ error: 'غير مصرح لك بإضافة مصاريف' });
+            
+            return handleAddSpend(req, res);
+        }
+
         // 4. Authentication Check (Legacy wrapper for older functions)
         // نحتاج هذا الكائن للدوال التي لم نقم بتحديثها بالكامل لتقبل context
         const user = await authenticateUser(req, res);
@@ -962,6 +971,28 @@ async function getGoogleSheet() {
     return sheet;
 }
 
+// [جديد] دالة مساعدة للاتصال بملف جوجل شيت كاملاً
+async function getGoogleDoc() {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+        throw new Error('Configuration Error: Missing Google Sheets credentials.');
+    }
+
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    await doc.loadInfo();
+    // console.log(`[GoogleSheets] Connected to doc: "${doc.title}"`);
+    return doc;
+}
+
 /**
  * ===================================================================
  * (POST) Logout - clears the session cookie
@@ -1005,4 +1036,37 @@ function normalizeCourseName(raw) {
         }
     }
     return 'دورات أخرى';
+}
+
+// [جديد] دالة لإضافة مصاريف تسويقية
+async function handleAddSpend(req, res) {
+    try {
+        const { date, campaign, source, spend, impressions, clicks } = req.body;
+
+        if (!date || !campaign || !spend) {
+            return res.status(400).json({ error: 'البيانات ناقصة: التاريخ، الحملة، والمبلغ مطلوبين' });
+        }
+
+        const doc = await getGoogleDoc();
+        const sheet = doc.sheetsByTitle["Marketing_Spend"];
+
+        if (!sheet) {
+            return res.status(500).json({ error: 'ورقة Marketing_Spend غير موجودة' });
+        }
+
+        await sheet.addRow({
+            'Date': date,
+            'Campaign': campaign,
+            'Source': source || 'Manual',
+            'Ad Spend': spend,
+            'Impressions': impressions || 0,
+            'Clicks': clicks || 0
+        });
+
+        return res.status(200).json({ success: true, message: 'تم حفظ المصاريف بنجاح' });
+
+    } catch (error) {
+        console.error('Add Spend Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
 }
