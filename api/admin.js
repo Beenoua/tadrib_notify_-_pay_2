@@ -450,6 +450,17 @@ export default async function handler(req, res) {
         if (req.method === 'GET') {
             return handleGet(req, res, user); // <--- هذا ما كان محظوراً سابقاً والآن أصبح متاحاً
         } else if (req.method === 'POST') {
+
+           // [بداية الكود الجديد] ---------------------------------
+            if (action === 'add_spend') {
+                // التحقق من الصلاحية: مسموح للسوبر أدمن، أو المحرر الذي يملك صلاحية التعديل
+                if (context.role !== 'super_admin' && !context.permissions?.can_edit) {
+                    return res.status(403).json({ error: 'ليس لديك صلاحية لتسجيل المصاريف' });
+                }
+                return handlePostSpend(req, res, context);
+            }
+            // [نهاية الكود الجديد] --------------------------------- 
+
             return handlePost(req, res, user);
         } else if (req.method === 'PUT') {
             // التحقق من صلاحية التعديل
@@ -561,7 +572,39 @@ async function handleGet(req, res, user) {
         } = req.query;
 
         const sheet = await getGoogleSheet(); // Connect to sheet
+        
+        // --- [تعديل 1: تأكد من أننا نحدد ورقة Leads بشكل صريح] ---
+        // الكود القديم كان: const rows = await sheet.getRows();
+        // استبدله أو تأكد من أنه يجلب ورقة "Leads" تحديداً كما يلي:
+        let leadsSheet = sheet; // الورقة الافتراضية التي جلبها getGoogleSheet
+        if (sheet.title !== 'Leads') {
+             // محاولة البحث عن Leads اذا لم تكن هي الافتراضية
+             if (sheet.doc.sheetsByTitle['Leads']) leadsSheet = sheet.doc.sheetsByTitle['Leads'];
+        }
+        
         const rows = await sheet.getRows();
+
+        // --- [بداية الكود الجديد: جلب بيانات المصاريف] ---
+        let spendData = [];
+        try {
+            // الوصول للورقة عبر الكائن doc الموجود داخل sheet
+            const spendSheet = sheet.doc.sheetsByTitle["Marketing_Spend"];
+            if (spendSheet) {
+                const spendRows = await spendSheet.getRows();
+                spendData = spendRows.map(row => ({
+                    date: row.get('Date'),
+                    campaign: row.get('Campaign'),
+                    source: row.get('Source'),
+                    // تحويل الأرقام لضمان العمليات الحسابية
+                    spend: parseFloat(row.get('Ad Spend') || 0),
+                    impressions: parseInt(row.get('Impressions') || 0),
+                    clicks: parseInt(row.get('Clicks') || 0)
+                }));
+            }
+        } catch (e) {
+            console.warn('Could not fetch Marketing_Spend sheet:', e.message);
+        }
+        // --- [نهاية الكود الجديد] ---
 
         let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
@@ -636,6 +679,7 @@ async function handleGet(req, res, user) {
             },
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
             isFiltered: isFiltered,
+            spendData: spendData,
             // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
             // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
             currentUser: { 
@@ -842,6 +886,50 @@ async function handleDelete(req, res, user) {
     }
 }
 
+/**
+ * ===================================================================
+ * (POST) Record Ad Spend - New Function
+ * ===================================================================
+ */
+async function handlePostSpend(req, res, context) {
+    try {
+        // نستخدم getGoogleSheet للحصول على المستند
+        const tempSheet = await getGoogleSheet(); 
+        const doc = tempSheet.doc; // الوصول للكائن الرئيسي
+
+        let sheet = doc.sheetsByTitle["Marketing_Spend"];
+        
+        // إنشاء الورقة تلقائياً إذا لم تكن موجودة
+        if (!sheet) {
+            sheet = await doc.addSheet({ 
+                headerValues: ['Date', 'Campaign', 'Source', 'Ad Spend', 'Impressions', 'Clicks'] 
+            });
+            await sheet.updateProperties({ title: "Marketing_Spend" });
+        }
+
+        const { date, campaign, source, spend, impressions, clicks } = req.body;
+
+        // التحقق من البيانات الأساسية
+        if (!date || !campaign || !spend) {
+            return res.status(400).json({ error: 'البيانات ناقصة (التاريخ، الحملة، المبلغ مطلوب)' });
+        }
+
+        await sheet.addRow({
+            'Date': date,
+            'Campaign': campaign,
+            'Source': source || 'Direct',
+            'Ad Spend': spend,
+            'Impressions': impressions || 0,
+            'Clicks': clicks || 0
+        });
+
+        res.status(201).json({ success: true, message: 'تم تسجيل المصروف بنجاح' });
+
+    } catch (error) {
+        console.error('Post Spend Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+}
 
 /**
  * ===================================================================
