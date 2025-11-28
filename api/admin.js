@@ -450,6 +450,16 @@ export default async function handler(req, res) {
         if (req.method === 'GET') {
             return handleGet(req, res, user); // <--- هذا ما كان محظوراً سابقاً والآن أصبح متاحاً
         } else if (req.method === 'POST') {
+            // إضافة مسار التعديل
+            if (action === 'update_spend') {
+                 if (context.role !== 'super_admin' && !context.permissions?.can_edit) return res.status(403).json({ error: 'صلاحيات غير كافية' });
+                 return handleUpdateSpend(req, res, context);
+            }
+            // إضافة مسار الحذف
+            if (action === 'delete_spend') {
+                 if (context.role !== 'super_admin') return res.status(403).json({ error: 'صلاحيات المدير مطلوبة للحذف' });
+                 return handleDeleteSpend(req, res, context);
+            }
 
            // [بداية الكود الجديد] ---------------------------------
             if (action === 'add_spend') {
@@ -1068,6 +1078,59 @@ async function handleLogout(req, res) {
     } catch (error) {
         console.error('Logout error', error);
         return res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// ============================================================
+// دالة تعديل مصروف موجود
+// ============================================================
+async function handleUpdateSpend(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        const sheet = doc.sheetsByTitle["Marketing_Spend"];
+        if (!sheet) return res.status(404).json({ error: 'ورقة المصاريف غير موجودة' });
+
+        const rows = await sheet.getRows();
+        const { rowIndex, date, campaign, source, spend, impressions, clicks } = req.body;
+
+        if (rowIndex === undefined || !rows[rowIndex]) {
+            return res.status(404).json({ error: 'السجل غير موجود أو تم حذفه' });
+        }
+
+        // تحديث القيم
+        const row = rows[rowIndex];
+        if(date) row.assign({ 'Date': date });
+        if(campaign) row.assign({ 'Campaign': campaign });
+        if(source) row.assign({ 'Source': source });
+        if(spend) row.assign({ 'Ad Spend': spend });
+        if(impressions) row.assign({ 'Impressions': impressions });
+        if(clicks) row.assign({ 'Clicks': clicks });
+
+        await row.save();
+        res.status(200).json({ success: true, message: 'تم تعديل المصروف' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+// ============================================================
+// دالة حذف مصروف
+// ============================================================
+async function handleDeleteSpend(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        const sheet = doc.sheetsByTitle["Marketing_Spend"];
+        const rows = await sheet.getRows();
+        const { rowIndex } = req.body;
+
+        if (rowIndex === undefined || !rows[rowIndex]) {
+            return res.status(404).json({ error: 'السجل غير موجود' });
+        }
+
+        await rows[rowIndex].delete();
+        res.status(200).json({ success: true, message: 'تم حذف المصروف' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 }
 
