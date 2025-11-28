@@ -584,27 +584,30 @@ async function handleGet(req, res, user) {
         
         const rows = await sheet.getRows();
 
-        // --- [بداية الكود الجديد: جلب بيانات المصاريف] ---
+        // --- [بداية الكود الآمن لجلب المصاريف] ---
         let spendData = [];
         try {
-            // الوصول للورقة عبر الكائن doc الموجود داخل sheet
-            const spendSheet = sheet.doc.sheetsByTitle["Marketing_Spend"];
+            // نستخدم اتصالاً منفصلاً لضمان عدم تأثير أي خطأ هنا على بيانات العملاء
+            const doc = await _getSafeDocConnection();
+            const spendSheet = doc.sheetsByTitle["Marketing_Spend"];
+            
             if (spendSheet) {
                 const spendRows = await spendSheet.getRows();
                 spendData = spendRows.map(row => ({
                     date: row.get('Date'),
                     campaign: row.get('Campaign'),
                     source: row.get('Source'),
-                    // تحويل الأرقام لضمان العمليات الحسابية
                     spend: parseFloat(row.get('Ad Spend') || 0),
                     impressions: parseInt(row.get('Impressions') || 0),
                     clicks: parseInt(row.get('Clicks') || 0)
                 }));
             }
         } catch (e) {
-            console.warn('Could not fetch Marketing_Spend sheet:', e.message);
+            // في حالة الخطأ، نسجل تحذيراً فقط ولا نوقف النظام
+            console.warn('Marketing Spend data could not be loaded (Ignored):', e.message);
+            // تبقى spendData مصفوفة فارغة []، وبالتالي تعمل لوحة التحكم دون مشاكل
         }
-        // --- [نهاية الكود الجديد] ---
+        // --- [نهاية الكود الآمن] ---
 
         let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
@@ -893,13 +896,13 @@ async function handleDelete(req, res, user) {
  */
 async function handlePostSpend(req, res, context) {
     try {
-        // نستخدم getGoogleSheet للحصول على المستند
-        const tempSheet = await getGoogleSheet(); 
-        const doc = tempSheet.doc; // الوصول للكائن الرئيسي
-
+        // 1. نستخدم الاتصال الآمن الجديد بدلاً من الاعتماد على الدالة القديمة
+        const doc = await _getSafeDocConnection();
+        
+        // 2. الآن نضمن الوصول للقائمة الصحيحة
         let sheet = doc.sheetsByTitle["Marketing_Spend"];
         
-        // إنشاء الورقة تلقائياً إذا لم تكن موجودة
+        // إنشاء الورقة إذا لم تكن موجودة
         if (!sheet) {
             sheet = await doc.addSheet({ 
                 headerValues: ['Date', 'Campaign', 'Source', 'Ad Spend', 'Impressions', 'Clicks'] 
@@ -909,7 +912,6 @@ async function handlePostSpend(req, res, context) {
 
         const { date, campaign, source, spend, impressions, clicks } = req.body;
 
-        // التحقق من البيانات الأساسية
         if (!date || !campaign || !spend) {
             return res.status(400).json({ error: 'البيانات ناقصة (التاريخ، الحملة، المبلغ مطلوب)' });
         }
@@ -1067,6 +1069,30 @@ async function handleLogout(req, res) {
         console.error('Logout error', error);
         return res.status(500).json({ error: 'Internal server error' });
     }
+}
+
+// ===================================================================
+// دالة مساعدة جديدة وآمنة: تتصل بالمستند مباشرة
+// (نضيفها في آخر الملف لتجنب أي تداخل مع الكود القديم)
+// ===================================================================
+async function _getSafeDocConnection() {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const privateKey = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+
+    if (!spreadsheetId || !serviceAccountEmail || !privateKey) {
+        throw new Error('بيانات الاتصال بـ Google Sheets مفقودة');
+    }
+
+    const serviceAccountAuth = new JWT({
+        email: serviceAccountEmail,
+        key: privateKey,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
+    const doc = new GoogleSpreadsheet(spreadsheetId, serviceAccountAuth);
+    await doc.loadInfo(); // تحميل المستند كاملاً
+    return doc;
 }
 
 // Normalize course names to shortcodes (same mapping as frontend)
