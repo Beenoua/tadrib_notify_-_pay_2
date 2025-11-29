@@ -130,24 +130,14 @@ async function getRequestContext(req) {
 function parseDate(ts) {
     if (!ts) return null;
     let date;
-    
-    // 1. المحاولة الأولى: الصيغة القياسية ISO أو النصية
-    // نقوم بتنظيف النصوص الزائدة مثل " h " التي قد تأتي من فورمات جوجل شيت
-    let cleaned = String(ts).replace(" h ", ":").replace(" min ", ":").replace(" s", "");
-    date = new Date(cleaned);
-    if (!isNaN(date.getTime())) return date;
-
-    // 2. المحاولة الثانية: صيغة DD/MM/YYYY (الشهيرة في المنطقة العربية/فرنسا)
-    if (cleaned.includes('/')) {
-        const parts = cleaned.split('/'); // نتوقع [DD, MM, YYYY]
-        if (parts.length === 3) {
-            // انتبه: الشهر في جافاسكريبت يبدأ من 0 (يناير = 0)
-            // الترتيب هنا: السنة، الشهر-1، اليوم
-            date = new Date(parts[2], parts[1] - 1, parts[0]);
-            if (!isNaN(date.getTime())) return date;
-        }
+    const isoTest = new Date(ts);
+    if (!isNaN(isoTest.getTime())) {
+        date = isoTest;
+    } else {
+        let cleaned = ts.replace(" h ", ":").replace(" min ", ":").replace(" s", "");
+        date = new Date(cleaned);
     }
-
+    if (!isNaN(date.getTime())) { return date; }
     return null;
 }
 
@@ -658,21 +648,9 @@ async function handleGet(req, res, user) {
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
 // --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
-        // التعديل الجديد: لا نحذف الصفوف لكي تبقى الإحصائيات (Counts) صحيحة،
-        // لكن نقوم بتشفير البيانات الحساسة (المبلغ، الهاتف، الإيميل).
+        // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
         if (user.role !== 'super_admin') {
-            data = data.map(item => {
-                if (item.status.toLowerCase() === 'paid') {
-                    return {
-                        ...item,
-                        finalAmount: 0, // تصفير المبلغ لكي لا يظهر في الجمع المالي
-                        customerPhone: item.customerPhone ? item.customerPhone.substring(0, 4) + '****' : '***', // إخفاء الهاتف
-                        customerEmail: '*** hidden ***', // إخفاء البريد
-                        // نحتفظ بـ status و course و date لكي تعمل الرسوم البيانية
-                    };
-                }
-                return item;
-            });
+            data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
@@ -739,11 +717,6 @@ async function handleGet(req, res, user) {
  */
 async function handlePost(req, res, user) {
     try {
-        // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
-        if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
-            return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة بيانات جديدة' });
-        }
-        // ------------------------------------------------
 
         const sheet = await getGoogleSheet();
 
