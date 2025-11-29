@@ -662,6 +662,11 @@ async function handleGet(req, res, user) {
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
+        // --- (SECURITY FILTER 2) حجب بيانات المصاريف ---
+        // بما أنك اخترت الإخفاء التام، يجب تصفير مصفوفة المصاريف للمحررين
+        if (user.role !== 'super_admin') {
+            spendData = []; 
+        }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
