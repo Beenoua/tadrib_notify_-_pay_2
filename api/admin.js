@@ -969,7 +969,8 @@ async function handlePostSpend(req, res, context) {
         }
 
         await sheet.addRow({
-            'Date': date,
+            'Start_Date': startDate,
+            'End_Date': endDate,
             'Campaign': campaign,
             'Source': source || 'Direct',
             'Ad Spend': spend,
