@@ -717,6 +717,11 @@ async function handleGet(req, res, user) {
  */
 async function handlePost(req, res, user) {
     try {
+        // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
+        if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة بيانات جديدة' });
+        }
+        // ------------------------------------------------
 
         const sheet = await getGoogleSheet();
 
