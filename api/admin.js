@@ -614,7 +614,9 @@ async function handleGet(req, res, user) {
             if (spendSheet) {
                 const spendRows = await spendSheet.getRows();
                 spendData = spendRows.map(row => ({
-                    date: row.get('Date'),
+                    // التغيير هنا: قراءة النطاق الزمني بدلاً من تاريخ واحد
+                startDate: row.get('Start_Date'), // تاريخ بداية الحملة
+                endDate: row.get('End_Date'),     // تاريخ نهاية الحملة
                     campaign: row.get('Campaign'),
                     source: row.get('Source'),
                     spend: parseFloat(row.get('Ad Spend') || 0),
