@@ -742,9 +742,17 @@ async function handlePost(req, res, user) {
 
         const newItem = req.body;
 
+        // --- (NEW) تجهيز التاريخ بالصيغة المخصصة ---
+        // الصيغة: YYYY-MM-DD HH h MM min SS s
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0'); // دالة لإضافة صفر للأرقام الفردية
+        
+        const customTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())} h ${pad(now.getMinutes())} min ${pad(now.getSeconds())} s`;
+        // -------------------------------------------
+
         // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
         await sheet.addRow({
-            'Timestamp': new Date().toISOString(),
+            'Timestamp': customTimestamp,
             'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
