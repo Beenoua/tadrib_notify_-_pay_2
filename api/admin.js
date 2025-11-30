@@ -1221,4 +1221,4 @@ function normalizeCourseName(raw) {
         }
     }
     return 'دورات أخرى';
-}ض
+}
