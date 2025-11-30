@@ -630,6 +630,28 @@ async function handleGet(req, res, user) {
         }
         // --- [نهاية الكود الآمن] ---
 
+        // --- [بداية: جلب إعدادات الحملات - Campaign Registry] ---
+        let campaignConfig = [];
+        try {
+            // نستخدم نفس الاتصال الآمن
+            const doc = await _getSafeDocConnection();
+            const configSheet = doc.sheetsByTitle["Campaign_Registry"];
+            
+            if (configSheet) {
+                const configRows = await configSheet.getRows();
+                campaignConfig = configRows.map(row => ({
+                    name: row.get('Campaign Name'),
+                    start: row.get('Start DateTime'),
+                    end: row.get('End DateTime'),
+                    status: row.get('Status')
+                }));
+            }
+        } catch (e) {
+            console.warn('Campaign Registry could not be loaded:', e.message);
+            // نستمر ولا نوقف النظام، المصفوفة ستبقى فارغة
+        }
+        // --- [نهاية: Campaign Registry] ---
+
         let data = rows.map(row => ({
             timestamp: row.get('Timestamp') || '',
             inquiryId: row.get('Inquiry ID') || '',
@@ -709,6 +731,7 @@ async function handleGet(req, res, user) {
             data: filteredData.sort((a, b) => (b.parsedDate?.getTime() || 0) - (a.parsedDate?.getTime() || 0)),
             isFiltered: isFiltered,
             spendData: spendData,
+            campaignConfig: campaignConfig,
             // [تحديث هام]: نرسل بيانات المستخدم الحالية من قاعدة البيانات مباشرة
             // هذا يسمح للواجهة بتحديث نفسها إذا تغير الدور أو الصلاحيات
             currentUser: { 
