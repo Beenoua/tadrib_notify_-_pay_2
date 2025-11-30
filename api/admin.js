@@ -1129,7 +1129,7 @@ async function handleUpdateSpend(req, res, context) {
         // البحث عن الصف الذي يملك نفس الـ ID
         const row = rows.find(r => r.get('Spend ID') === spendId);
 
-        if (!spendId === undefined || !rows[spendId]) {
+        if (!row) {
             return res.status(404).json({ error: 'السجل غير موجود أو تم حذفه' });
         }
 
@@ -1160,11 +1160,11 @@ async function handleDeleteSpend(req, res, context) {
         // البحث عن الصف وحذفه
         const row = rows.find(r => r.get('Spend ID') === spendId);
 
-        if (!spendId === undefined || !rows[spendId]) {
+        if (!row) {
             return res.status(404).json({ error: 'السجل غير موجود' });
         }
 
-        await rows[spendId].delete();
+        await row.delete();
         res.status(200).json({ success: true, message: 'تم حذف المصروف' });
     } catch (e) {
         res.status(500).json({ error: e.message });
