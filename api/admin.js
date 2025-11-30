@@ -614,12 +614,13 @@ async function handleGet(req, res, user) {
             if (spendSheet) {
                 const spendRows = await spendSheet.getRows();
                 spendData = spendRows.map(row => ({
-                    // التغيير هنا: قراءة النطاق الزمني بدلاً من تاريخ واحد
-                startDate: row.get('Start_Date'), // تاريخ بداية الحملة
-                endDate: row.get('End_Date'),     // تاريخ نهاية الحملة
+                    // التحديث: قراءة تاريخ البداية والنهاية بدلاً من Date
+                    startDate: row.get('Start_Date'), 
+                    endDate: row.get('End_Date'),     
+                    
                     campaign: row.get('Campaign'),
                     source: row.get('Source'),
-                    spend: parseFloat(row.get('Ad Spend') || 0),
+                    amount_spent: parseFloat(row.get('Ad Spend') || 0), // تأكد من توحيد التسمية (amount_spent أو spend)
                     impressions: parseInt(row.get('Impressions') || 0),
                     clicks: parseInt(row.get('Clicks') || 0)
                 }));
