@@ -614,13 +614,10 @@ async function handleGet(req, res, user) {
             if (spendSheet) {
                 const spendRows = await spendSheet.getRows();
                 spendData = spendRows.map(row => ({
-                    // التحديث: قراءة تاريخ البداية والنهاية بدلاً من Date
-                    startDate: row.get('Start_Date'), 
-                    endDate: row.get('End_Date'),     
-                    
+                    date: row.get('Date'),
                     campaign: row.get('Campaign'),
                     source: row.get('Source'),
-                    amount_spent: parseFloat(row.get('Ad Spend') || 0), // تأكد من توحيد التسمية (amount_spent أو spend)
+                    spend: parseFloat(row.get('Ad Spend') || 0),
                     impressions: parseInt(row.get('Impressions') || 0),
                     clicks: parseInt(row.get('Clicks') || 0)
                 }));
@@ -969,8 +966,7 @@ async function handlePostSpend(req, res, context) {
         }
 
         await sheet.addRow({
-            'Start_Date': startDate,
-            'End_Date': endDate,
+            'Date': date,
             'Campaign': campaign,
             'Source': source || 'Direct',
             'Ad Spend': spend,
@@ -1225,4 +1221,4 @@ function normalizeCourseName(raw) {
         }
     }
     return 'دورات أخرى';
-}
+}ض
