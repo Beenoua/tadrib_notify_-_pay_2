@@ -130,24 +130,14 @@ async function getRequestContext(req) {
 function parseDate(ts) {
     if (!ts) return null;
     let date;
-    
-    // 1. المحاولة الأولى: الصيغة القياسية ISO أو النصية
-    // نقوم بتنظيف النصوص الزائدة مثل " h " التي قد تأتي من فورمات جوجل شيت
-    let cleaned = String(ts).replace(" h ", ":").replace(" min ", ":").replace(" s", "");
-    date = new Date(cleaned);
-    if (!isNaN(date.getTime())) return date;
-
-    // 2. المحاولة الثانية: صيغة DD/MM/YYYY (الشهيرة في المنطقة العربية/فرنسا)
-    if (cleaned.includes('/')) {
-        const parts = cleaned.split('/'); // نتوقع [DD, MM, YYYY]
-        if (parts.length === 3) {
-            // انتبه: الشهر في جافاسكريبت يبدأ من 0 (يناير = 0)
-            // الترتيب هنا: السنة، الشهر-1، اليوم
-            date = new Date(parts[2], parts[1] - 1, parts[0]);
-            if (!isNaN(date.getTime())) return date;
-        }
+    const isoTest = new Date(ts);
+    if (!isNaN(isoTest.getTime())) {
+        date = isoTest;
+    } else {
+        let cleaned = ts.replace(" h ", ":").replace(" min ", ":").replace(" s", "");
+        date = new Date(cleaned);
     }
-
+    if (!isNaN(date.getTime())) { return date; }
     return null;
 }
 
@@ -662,11 +652,6 @@ async function handleGet(req, res, user) {
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
         }
-        // --- (SECURITY FILTER 2) حجب بيانات المصاريف ---
-        // بما أنك اخترت الإخفاء التام، يجب تصفير مصفوفة المصاريف للمحررين
-        if (user.role !== 'super_admin') {
-            spendData = []; 
-        }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
         // 1. حساب الإحصائيات الإجمالية (دائماً)
@@ -697,12 +682,6 @@ async function handleGet(req, res, user) {
             // 4. حساب الإحصائيات المفلترة
             filteredStats = calculateStatistics(filteredData);
         }
-        
-        // --- (SECURITY FILTER) حجب بيانات المصاريف ---
-// المحرر لا يجب أن يرى كم صرفنا على الإعلانات
-if (user.role !== 'super_admin') {
-    spendData = []; // إفراغ المصفوفة تماماً
-}
 
         // 5. إرجاع البيانات المفلترة + كلا الإحصائيات + (هام) تحديث بيانات المستخدم
         res.status(200).json({
@@ -737,33 +716,15 @@ if (user.role !== 'super_admin') {
  * ===================================================================
  */
 async function handlePost(req, res, user) {
-    // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
-// نمنع أي شخص لا يملك صلاحية التعديل من إضافة بيانات
-if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
-    return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة بيانات جديدة' });
-}
-// ------------------------------------------------
     try {
-        // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
-        if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
-            return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة بيانات جديدة' });
-        }
-        // ------------------------------------------------
 
         const sheet = await getGoogleSheet();
 
         const newItem = req.body;
-// --- (NEW) تجهيز التاريخ بالصيغة المخصصة ---
-        // الصيغة: YYYY-MM-DD HH h MM min SS s
-        const now = new Date();
-        const pad = (n) => String(n).padStart(2, '0'); // دالة لإضافة صفر للأرقام الفردية
-        
-        const customTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())} h ${pad(now.getMinutes())} min ${pad(now.getSeconds())} s`;
-        // -------------------------------------------
 
-        // إضافة صف جديد
+        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
         await sheet.addRow({
-            'Timestamp': customTimestamp,
+            'Timestamp': new Date().toISOString(),
             'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
