@@ -657,10 +657,15 @@ async function handleGet(req, res, user) {
             parsedDate: parseDate(row.get('Timestamp') || ''),
             normalizedCourse: normalizeCourseName(row.get('Selected Course') || '')
         }));
-// --- (SECURITY FILTER) الفلتر الأمني للمحررين ---
+// --- (SECURITY FILTER 1) الفلتر الأمني للمحررين ---
         // إذا لم يكن سوبر أدمن، نحذف المعاملات المدفوعة نهائياً من القائمة
         if (user.role !== 'super_admin') {
             data = data.filter(item => item.status.toLowerCase() !== 'paid');
+        }
+        // --- (SECURITY FILTER 2) حجب بيانات المصاريف ---
+        // بما أنك اخترت الإخفاء التام، يجب تصفير مصفوفة المصاريف للمحررين
+        if (user.role !== 'super_admin') {
+            spendData = []; 
         }
         // --- (NEW) منطق الفلترة والحساب المركزي ---
 
