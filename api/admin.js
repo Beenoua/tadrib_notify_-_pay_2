@@ -614,6 +614,7 @@ async function handleGet(req, res, user) {
             if (spendSheet) {
                 const spendRows = await spendSheet.getRows();
                 spendData = spendRows.map(row => ({
+                    id: row.get('Spend ID'),
                     date: row.get('Date'),
                     campaign: row.get('Campaign'),
                     source: row.get('Source'),
@@ -943,7 +944,7 @@ async function handlePostSpend(req, res, context) {
         // إنشاء الورقة إذا لم تكن موجودة
         if (!sheet) {
             sheet = await doc.addSheet({ 
-                headerValues: ['Date', 'Campaign', 'Source', 'Ad Spend', 'Impressions', 'Clicks'] 
+                headerValues: ['Spend ID', 'Date', 'Campaign', 'Source', 'Ad Spend', 'Impressions', 'Clicks'] 
             });
             await sheet.updateProperties({ title: "Marketing_Spend" });
         }
@@ -954,7 +955,11 @@ async function handlePostSpend(req, res, context) {
             return res.status(400).json({ error: 'البيانات ناقصة (التاريخ، الحملة، المبلغ مطلوب)' });
         }
 
+        // توليد معرف فريد
+        const spendId = `SPD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
         await sheet.addRow({
+            'Spend ID': spendId,
             'Date': date,
             'Campaign': campaign,
             'Source': source || 'Direct',
@@ -1119,14 +1124,16 @@ async function handleUpdateSpend(req, res, context) {
         if (!sheet) return res.status(404).json({ error: 'ورقة المصاريف غير موجودة' });
 
         const rows = await sheet.getRows();
-        const { rowIndex, date, campaign, source, spend, impressions, clicks } = req.body;
+        const { spendId, date, campaign, source, spend, impressions, clicks } = req.body;
 
-        if (rowIndex === undefined || !rows[rowIndex]) {
+        // البحث عن الصف الذي يملك نفس الـ ID
+        const row = rows.find(r => r.get('Spend ID') === spendId);
+
+        if (!spendId === undefined || !rows[spendId]) {
             return res.status(404).json({ error: 'السجل غير موجود أو تم حذفه' });
         }
 
         // تحديث القيم
-        const row = rows[rowIndex];
         if(date) row.assign({ 'Date': date });
         if(campaign) row.assign({ 'Campaign': campaign });
         if(source) row.assign({ 'Source': source });
@@ -1149,13 +1156,15 @@ async function handleDeleteSpend(req, res, context) {
         const doc = await _getSafeDocConnection();
         const sheet = doc.sheetsByTitle["Marketing_Spend"];
         const rows = await sheet.getRows();
-        const { rowIndex } = req.body;
+        const { spendId } = req.body;
+        // البحث عن الصف وحذفه
+        const row = rows.find(r => r.get('Spend ID') === spendId);
 
-        if (rowIndex === undefined || !rows[rowIndex]) {
+        if (!spendId === undefined || !rows[spendId]) {
             return res.status(404).json({ error: 'السجل غير موجود' });
         }
 
-        await rows[rowIndex].delete();
+        await rows[spendId].delete();
         res.status(200).json({ success: true, message: 'تم حذف المصروف' });
     } catch (e) {
         res.status(500).json({ error: e.message });
