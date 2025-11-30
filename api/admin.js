@@ -697,6 +697,12 @@ async function handleGet(req, res, user) {
             // 4. حساب الإحصائيات المفلترة
             filteredStats = calculateStatistics(filteredData);
         }
+        
+        // --- (SECURITY FILTER) حجب بيانات المصاريف ---
+// المحرر لا يجب أن يرى كم صرفنا على الإعلانات
+if (user.role !== 'super_admin') {
+    spendData = []; // إفراغ المصفوفة تماماً
+}
 
         // 5. إرجاع البيانات المفلترة + كلا الإحصائيات + (هام) تحديث بيانات المستخدم
         res.status(200).json({
@@ -731,6 +737,12 @@ async function handleGet(req, res, user) {
  * ===================================================================
  */
 async function handlePost(req, res, user) {
+    // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
+// نمنع أي شخص لا يملك صلاحية التعديل من إضافة بيانات
+if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
+    return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة بيانات جديدة' });
+}
+// ------------------------------------------------
     try {
         // --- (SECURITY CHECK) التحقق من صلاحية الإضافة ---
         if (user.role !== 'super_admin' && !user.permissions?.can_edit) {
@@ -741,10 +753,17 @@ async function handlePost(req, res, user) {
         const sheet = await getGoogleSheet();
 
         const newItem = req.body;
+// --- (NEW) تجهيز التاريخ بالصيغة المخصصة ---
+        // الصيغة: YYYY-MM-DD HH h MM min SS s
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0'); // دالة لإضافة صفر للأرقام الفردية
+        
+        const customTimestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())} h ${pad(now.getMinutes())} min ${pad(now.getSeconds())} s`;
+        // -------------------------------------------
 
-        // إضافة صف جديد مع ربط دقيق لكل الأعمدة في Google Sheets
+        // إضافة صف جديد
         await sheet.addRow({
-            'Timestamp': new Date().toISOString(),
+            'Timestamp': customTimestamp,
             'Inquiry ID': newItem.inquiryId,
             'Full Name': newItem.customerName,
             'Email': newItem.customerEmail,
