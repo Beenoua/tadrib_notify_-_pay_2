@@ -508,7 +508,6 @@ export default async function handler(req, res) {
             // [جديد] مسار حذف الحملة
 if (action === 'delete_campaign') {
      if (context.role !== 'super_admin') return res.status(403).json({ error: 'الحذف مقتصر على المدير' });
-     return handleDeleteCampaign(req, res, context);
 }
 
             // التحقق من صلاحية الحذف
@@ -1223,8 +1222,7 @@ async function handlePostCampaign(req, res, context) {
         let sheet = doc.sheetsByTitle["Campaign_Registry"];
         if (!sheet) {
             // لاحظ إضافة Budget هنا
-            sheet = await doc.addSheet({ headerValues: ['Campaign Name', 'Budget', 'Start DateTime', 'End DateTime', 'Status'] });
-            await sheet.updateProperties({ title: "Campaign_Registry" });
+        sheet = await doc.addSheet({ headerValues: ['Campaign Name', 'Budget', 'Start DateTime', 'End DateTime', 'Status'] });            await sheet.updateProperties({ title: "Campaign_Registry" });
         }
 
         const { name, budget, start, end, status } = req.body; // استقبال الميزانية
@@ -1269,6 +1267,26 @@ async function handleUpdateCampaign(req, res, context) {
 
         await row.save();
         res.status(200).json({ success: true, message: 'تم تحديث الحملة' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+// ============================================================
+// دالة حذف حملة (كانت مفقودة)
+// ============================================================
+async function handleDeleteCampaign(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        const sheet = doc.sheetsByTitle["Campaign_Registry"];
+        const rows = await sheet.getRows();
+        const { name } = req.body;
+
+        const row = rows.find(r => r.get('Campaign Name') === name);
+        if (!row) return res.status(404).json({ error: 'الحملة غير موجودة' });
+
+        await row.delete();
+        res.status(200).json({ success: true, message: 'تم حذف الحملة' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
