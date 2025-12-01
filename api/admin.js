@@ -490,6 +490,12 @@ export default async function handler(req, res) {
                  return handlePostCampaign(req, res, context);
             }
 
+            // [جديد] مسار تعديل الحملة
+                if (action === 'update_campaign') {
+                if (context.role !== 'super_admin' && !context.permissions?.can_edit) return res.status(403).json({ error: 'صلاحيات غير كافية' });
+                return handleUpdateCampaign(req, res, context);
+            }
+
             return handlePost(req, res, user);
         } else if (req.method === 'PUT') {
             // التحقق من صلاحية التعديل
@@ -498,6 +504,13 @@ export default async function handler(req, res) {
             }
             return handlePut(req, res, user);
         } else if (req.method === 'DELETE') {
+
+            // [جديد] مسار حذف الحملة
+if (action === 'delete_campaign') {
+     if (context.role !== 'super_admin') return res.status(403).json({ error: 'الحذف مقتصر على المدير' });
+     return handleDeleteCampaign(req, res, context);
+}
+
             // التحقق من صلاحية الحذف
             if (user.role !== 'super_admin') {
                  return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
@@ -1235,6 +1248,63 @@ async function handleDeleteSpend(req, res, context) {
 
         await row.delete();
         res.status(200).json({ success: true, message: 'تم حذف المصروف' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+async function handlePostCampaign(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        let sheet = doc.sheetsByTitle["Campaign_Registry"];
+        if (!sheet) {
+            // لاحظ إضافة Budget هنا
+            sheet = await doc.addSheet({ headerValues: ['Campaign Name', 'Budget', 'Start DateTime', 'End DateTime', 'Status'] });
+            await sheet.updateProperties({ title: "Campaign_Registry" });
+        }
+
+        const { name, budget, start, end, status } = req.body; // استقبال الميزانية
+
+        if (!name || !start) return res.status(400).json({ error: 'اسم الحملة ووقت البداية مطلوبان' });
+
+        await sheet.addRow({
+            'Campaign Name': name.trim(), // نزيل المسافات فقط، ونبقي الرموز _
+            'Budget': budget || 0,        // إضافة الميزانية
+            'Start DateTime': start,
+            'End DateTime': end || '',
+            'Status': status || 'Active'
+        });
+
+        res.status(201).json({ success: true, message: 'تم تسجيل الحملة' });
+    } catch (error) {
+        console.error('Post Campaign Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+}
+
+async function handleUpdateCampaign(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        const sheet = doc.sheetsByTitle["Campaign_Registry"];
+        if (!sheet) return res.status(404).json({ error: 'سجل الحملات غير موجود' });
+
+        const rows = await sheet.getRows();
+        const { originalName, name, budget, start, end, status } = req.body;
+
+        // البحث عن الحملة بالاسم الأصلي
+        const row = rows.find(r => r.get('Campaign Name') === originalName);
+
+        if (!row) return res.status(404).json({ error: 'الحملة غير موجودة' });
+
+        // التحديث
+        if (name) row.assign({ 'Campaign Name': name.trim() });
+        if (budget) row.assign({ 'Budget': budget });
+        if (start) row.assign({ 'Start DateTime': start });
+        if (end !== undefined) row.assign({ 'End DateTime': end }); // end قد يكون فارغاً
+        if (status) row.assign({ 'Status': status });
+
+        await row.save();
+        res.status(200).json({ success: true, message: 'تم تحديث الحملة' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
