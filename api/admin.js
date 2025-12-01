@@ -700,6 +700,7 @@ async function handleGet(req, res, user) {
                 const configRows = await configSheet.getRows();
                 campaignConfig = configRows.map(row => ({
                     name: row.get('Campaign Name'),
+                    budget: row.get('Budget') || 0,
                     start: row.get('Start DateTime'),
                     end: row.get('End DateTime'),
                     status: row.get('Status')
