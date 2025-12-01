@@ -119,10 +119,18 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
     const data = req.body;
 
+    // [DEBUG LOG] - لنعرف ماذا ترسل YouCanPay بالضبط في المرة القادمة
+    console.log("Incoming Payload:", JSON.stringify(data).substring(0, 500));
+
     const lang = data.metadata?.lang || data.currentLang || 'fr';
     const t = telegramTranslations[lang];
 
+    // [تصحيح 1] التحقق من Webhook عبر User-Agent أيضاً ليكون أكثر دقة
+    const userAgent = req.headers['user-agent'] || '';
+    const isYouCanPay = userAgent.includes('YouCanPay');
+
     const isWebhook =
+    isYouCanPay ||                           // [NEW] Check Header
     data.object === "event" ||               // Stripe style
     data.customer ||                         // Card payments send customer object
     data.metadata?.paymentMethod ||          // UTM metadata
@@ -133,9 +141,16 @@ export default async (req, res) => {
 
     // Validate required fields for webhook
     if (isWebhook) {
+      // [تصحيح 2] إذا كان ويب هوك لكن ينقصه البيانات (مثل ping event)، نتجاهله بسلام بدلاً من الخطأ
+      if (!data.customer || !data.metadata) {
+          console.warn("⚠️ Webhook received but missing customer/metadata (Ignored).");
+          // نرسل 200 لـ YouCanPay ليتوقف عن إعادة المحاولة
+          return res.status(200).json({ result: 'ignored', message: 'Non-transactional webhook ignored.' });
+      }
       validateRequired(data.customer, ['name', 'email', 'phone']);
       validateRequired(data.metadata, ['inquiryId']);
     } else {
+      // هذا المسار فقط لطلبات الموقع المباشرة
       validateRequired(data, ['clientName', 'clientEmail', 'clientPhone', 'inquiryId']);
     }
 
@@ -154,8 +169,6 @@ export default async (req, res) => {
     let rawStatus = isWebhook ? data.status : data.paymentStatus;
     
     // 2. Clean the raw status (robustly)
-    // Check for null, undefined value, empty string, or "undefined" string
-    // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
     if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.trim().toLowerCase() === 'undefined') {
         rawStatus = 'pending'; // Default to 'pending' if it's invalid
     }
