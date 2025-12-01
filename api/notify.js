@@ -84,16 +84,16 @@ const telegramTranslations = {
 // مصادقة Google Sheets
 async function authGoogleSheets() {
   const serviceAccountAuth = new JWT({
-        email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-    doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
-    await doc.loadInfo();
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
+  await doc.loadInfo();
 }
 
 export default async (req, res) => {
-  // CORS Setup
   const allowedOrigins = [
     'https://tadrib.ma',
     'https://tadrib.jaouadouarh.com',
@@ -102,12 +102,11 @@ export default async (req, res) => {
     'http://127.0.0.1:5500',
     'http://127.0.0.1:5501'
   ];
+
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
+  if (allowedOrigins.includes(origin))
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
-  }
+
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -120,66 +119,62 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
     const data = req.body;
 
-    console.log("Incoming Payload:", JSON.stringify(data).substring(0, 200)); // Log basics
+    const lang = data.metadata?.lang || data.currentLang || 'fr';
+    const t = telegramTranslations[lang];
 
-    // 1. تحديد نوع الطلب (Webhook vs Frontend)
     const isWebhook =
-      data.object === "event" ||               
-      (data.customer && typeof data.customer === 'object') ||                         
-      (data.metadata && data.metadata.paymentMethod) ||          
-      data.payment_method !== undefined ||                   
-      data.transaction_id !== undefined ||
-      data.id !== undefined ||
-      data.status !== undefined;
+    data.object === "event" ||               // Stripe style
+    data.customer ||                         // Card payments send customer object
+    data.metadata?.paymentMethod ||          // UTM metadata
+    data.payment_method ||                   // General card field
+    data.transaction_id ||                   // All card payments have transaction_id
+    data.status;                             // paid / pending_cashplus / etc
 
-    // 2. معالجة البيانات (Normalization) قبل التحقق
-    // هذا هو الجزء الذي سيصلح الخطأ 400
-    if (!isWebhook) {
-        // إذا كان الطلب من الـ Frontend، قد تأتي الحقول بأسماء مختلفة، نوحدها هنا
-        if (!data.clientName && data.name) data.clientName = data.name;
-        if (!data.clientEmail && data.email) data.clientEmail = data.email;
-        if (!data.clientPhone && data.phone) data.clientPhone = data.phone;
-        // inquiryId عادة يكون صحيحاً، لكن للاحتياط
-        if (!data.inquiryId && data.order_id) data.inquiryId = data.order_id;
-    }
 
-    // 3. التحقق من الحقول المطلوبة (Validation)
+    // Validate required fields for webhook
     if (isWebhook) {
-        if (data.customer) validateRequired(data.customer, ['name', 'email']); // نتساهل مع الهاتف
-        if (data.metadata) validateRequired(data.metadata, ['inquiryId']);
+      validateRequired(data.customer, ['name', 'email', 'phone']);
+      validateRequired(data.metadata, ['inquiryId']);
     } else {
-        // الآن بعد التوحيد في الخطوة 2، هذا التحقق سيمر بسلام
-        validateRequired(data, ['clientName', 'clientEmail', 'clientPhone', 'inquiryId']);
+      validateRequired(data, ['clientName', 'clientEmail', 'clientPhone', 'inquiryId']);
     }
 
-    // تحديد اللغة
-    let lang = 'fr';
-    if (data.metadata?.lang) lang = data.metadata.lang;
-    else if (data.currentLang) lang = data.currentLang;
-    else if (data.lang) lang = data.lang;
+    // Validate email and phone if provided
+    const emailToValidate = isWebhook ? data.customer.email : data.clientEmail;
+    const phoneToValidate = isWebhook ? data.customer.phone : data.clientPhone;
 
-    const t = telegramTranslations[lang] || telegramTranslations['fr'];
-
-    // استخراج الحالة Status
+    if (emailToValidate && !validateEmail(emailToValidate)) {
+      throw new Error('Invalid email format');
+    }
+    if (phoneToValidate && !validatePhone(phoneToValidate)) {
+      throw new Error('Invalid phone number format');
+    }
+      // --- START ROBUST FIX for 'undefined' status ---
+    // 1. Determine the raw status
     let rawStatus = isWebhook ? data.status : data.paymentStatus;
-    if (!rawStatus || String(rawStatus).trim().toLowerCase() === 'undefined') {
-        rawStatus = 'pending';
+    
+    // 2. Clean the raw status (robustly)
+    // Check for null, undefined value, empty string, or "undefined" string
+    // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
+    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.trim().toLowerCase() === 'undefined') {
+        rawStatus = 'pending'; // Default to 'pending' if it's invalid
     }
+    // --- END FINAL FIX ---
 
-    // تجهيز البيانات النهائية الموحدة
+    // جميع البيانات المهيكلة
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: sanitizeString(isWebhook ? (data.metadata?.inquiryId || data.order_id) : data.inquiryId),
+      inquiryId: sanitizeString(isWebhook ? data.metadata.inquiryId : data.inquiryId),
 
-      clientName: sanitizeString(isWebhook ? data.customer?.name : data.clientName) || 'Unknown',
-      clientEmail: sanitizeString(isWebhook ? data.customer?.email : data.clientEmail) || 'Unknown',
-      clientPhone: normalizePhone(isWebhook ? data.customer?.phone : data.clientPhone) || 'Unknown',
+      clientName: sanitizeString(isWebhook ? data.customer.name : data.clientName),
+      clientEmail: sanitizeString(isWebhook ? data.customer.email : data.clientEmail),
+      clientPhone: normalizePhone(isWebhook ? data.customer.phone : data.clientPhone),
 
-      selectedCourse: sanitizeString(isWebhook ? data.metadata?.course : data.selectedCourse) || 'N/A',
-      qualification: sanitizeString(isWebhook ? data.metadata?.qualification : data.qualification) || 'N/A',
-      experience: sanitizeString(isWebhook ? data.metadata?.experience : data.experience) || 'N/A',
+      selectedCourse: sanitizeString(isWebhook ? data.metadata.course : data.selectedCourse),
+      qualification: sanitizeString(isWebhook ? data.metadata.qualification : data.qualification),
+      experience: sanitizeString(isWebhook ? data.metadata.experience : data.experience),
 
-      paymentMethod: sanitizeString(data.payment_method || data.metadata?.paymentMethod || (isWebhook ? 'card/webhook' : data.paymentMethod)),
+      paymentMethod: sanitizeString(data.payment_method || data.metadata?.paymentMethod || null),
       cashplusCode: sanitizeString(data.cashplus?.code || null),
       last4: sanitizeString(data.card?.last4 || data.metadata?.card?.last4 || null),
       amount: data.amount || data.metadata?.finalAmount || null,
@@ -192,52 +187,53 @@ export default async (req, res) => {
       utm_term: sanitizeString(data.utm_term || ''),
       utm_content: sanitizeString(data.utm_content || ''),
 
-      paymentStatus: sanitizeString(String(rawStatus)),
-      transactionId: sanitizeString(isWebhook ? (data.transaction_id || data.id) : (data.transactionId || 'N/A'))
+      paymentStatus: sanitizeString(isWebhook ? data.status : (data.paymentStatus || 'pending')),
+      transactionId: sanitizeString(isWebhook ? data.transaction_id : (data.transactionId || 'N/A'))
     };
 
-    // --- (نفس كود Google Sheets - لم يتغير) ---
-    try {
-        await authGoogleSheets();
-        let sheet = doc.sheetsByTitle["Leads"];
-        if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
-        // ... (تأكد من وجود نفس Headers وكود الإضافة) ...
-        const headers = [
-            "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
-            "Selected Course", "Qualification", "Experience",
-            "Payment Method", "CashPlus Code", "Last4Digits",
-            "Amount", "Currency", "Lang",
-            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-            "Payment Status", "Transaction ID"
-        ];
-        await sheet.loadHeaderRow();
-        if (sheet.headerValues.length === 0) await sheet.setHeaderRow(headers);
-        await sheet.addRow({
-            "Timestamp": normalizedData.timestamp,
-            "Inquiry ID": normalizedData.inquiryId,
-            "Full Name": normalizedData.clientName,
-            "Email": normalizedData.clientEmail,
-            "Phone Number": normalizedData.clientPhone,
-            "Selected Course": normalizedData.selectedCourse,
-            "Qualification": normalizedData.qualification,
-            "Experience": normalizedData.experience,
-            "Payment Method": normalizedData.paymentMethod,
-            "CashPlus Code": normalizedData.cashplusCode,
-            "Last4Digits": normalizedData.last4,
-            "Amount": normalizedData.amount,
-            "Currency": normalizedData.currency,
-            "Lang": normalizedData.lang,
-            "utm_source": normalizedData.utm_source,
-            "utm_medium": normalizedData.utm_medium,
-            "utm_campaign": normalizedData.utm_campaign,
-            "utm_term": normalizedData.utm_term,
-            "utm_content": normalizedData.utm_content,
-            "Payment Status": normalizedData.paymentStatus,
-            "Transaction ID": normalizedData.transactionId
-        });
-    } catch (sheetError) {
-        console.error("Sheet Error:", sheetError.message);
-    }
+    // حفظ في Google Sheets
+    await authGoogleSheets();
+    let sheet = doc.sheetsByTitle["Leads"];
+    if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
+
+    const headers = [
+      "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
+      "Selected Course", "Qualification", "Experience",
+      "Payment Method", "CashPlus Code", "Last4Digits",
+      "Amount", "Currency", "Lang",
+      "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+      "Payment Status", "Transaction ID"
+    ];
+
+    await sheet.loadHeaderRow();
+    if (sheet.headerValues.length === 0) await sheet.setHeaderRow(headers);
+
+    await sheet.addRow({
+      "Timestamp": normalizedData.timestamp,
+      "Inquiry ID": normalizedData.inquiryId,
+      "Full Name": normalizedData.clientName,
+      "Email": normalizedData.clientEmail,
+      "Phone Number": normalizedData.clientPhone,
+      "Selected Course": normalizedData.selectedCourse,
+      "Qualification": normalizedData.qualification,
+      "Experience": normalizedData.experience,
+
+      "Payment Method": normalizedData.paymentMethod,
+      "CashPlus Code": normalizedData.cashplusCode,
+      "Last4Digits": normalizedData.last4,
+      "Amount": normalizedData.amount,
+      "Currency": normalizedData.currency,
+      "Lang": normalizedData.lang,
+
+      "utm_source": normalizedData.utm_source,
+      "utm_medium": normalizedData.utm_medium,
+      "utm_campaign": normalizedData.utm_campaign,
+      "utm_term": normalizedData.utm_term,
+      "utm_content": normalizedData.utm_content,
+
+      "Payment Status": normalizedData.paymentStatus,
+      "Transaction ID": normalizedData.transactionId
+    });
 
     // رسالة التيليغرام
     const message = `
