@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { validateEmail, validatePhone, sanitizeString, validateRequired, normalizePhone, sanitizeTelegramHTML } from './utils.js';
+import { validateEmail, normalizePhone, sanitizeString, sanitizeTelegramHTML } from './utils.js';
 
 // 1. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -97,7 +97,7 @@ async function authGoogleSheets() {
 }
 
 export default async (req, res) => {
-  // CORS
+  // CORS Setup
   const allowedOrigins = [
     'https://tadrib.ma',
     'https://tadrib.jaouadouarh.com',
@@ -126,94 +126,102 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
     const body = req.body;
 
-    console.log("Incoming Payload:", JSON.stringify(body).substring(0, 300)); // Log for debugging
+    console.log("Incoming Payload:", JSON.stringify(body).substring(0, 500)); 
 
-    // --- [الجزء السحري] طبقة استخراج البيانات (Extraction Layer) ---
-    // هذا الجزء يحدد أين توجد البيانات الحقيقية سواء كانت مسطحة (Postman) أو متداخلة (Real)
+    // --- [تحسين جذري] استخراج البيانات متعدد المستويات (Multi-Level Extraction) ---
     
-    let sourceData = body; // الافتراضي: البيانات في الجذر
-    let isNested = false;
-
-    // التحقق مما إذا كانت البيانات داخل payload.transaction (بوابة الدفع الحقيقية)
-    if (body.payload && body.payload.transaction) {
-        sourceData = body.payload.transaction;
-        isNested = true;
-    }
-
-    // تحديد كائنات البيانات الفرعية بناءً على المصدر المحدد
-    const customer = sourceData.customer || {};
-    const metadata = sourceData.metadata || {};
-    const card = sourceData.card || {};
-    const cashplus = sourceData.cashplus || {};
-
-    // --- 1. استخراج الحقول الأساسية ---
-    // نبحث في الكائن المستخرج (sourceData) بدلاً من الجسم الرئيسي (body)
+    // 1. تحديد المصادر المحتملة للبيانات
+    const payload = body.payload || {};
+    const transaction = payload.transaction || body.transaction || {}; 
     
-    const rawName = customer.name || sourceData.clientName || body.clientName || 'Unknown';
-    const rawEmail = customer.email || sourceData.clientEmail || body.clientEmail || 'Unknown';
-    const rawPhone = customer.phone || sourceData.clientPhone || body.clientPhone || 'Unknown';
+    // ملاحظة: transaction هي المصدر الأوثق للحالة والمبلغ
     
-    // inquiryId قد يكون order_id في البوابة الحقيقية
-    const rawInquiryId = metadata.inquiryId || sourceData.order_id || sourceData.inquiryId || body.inquiryId;
+    // 2. البحث عن Customer في كل مكان (الأولوية للداخل ثم الخارج)
+    const customer = transaction.customer || payload.customer || body.customer || {};
+    
+    // 3. البحث عن Metadata في كل مكان
+    const metadata = transaction.metadata || payload.metadata || body.metadata || {};
 
-    // --- 2. التحقق من البيانات (Validation) ---
-    // إذا لم نجد البيانات، نوقف العملية ونصدر خطأ واضحاً
-    if (!rawName || rawName === 'Unknown' || !rawInquiryId) {
-         // نسمح بمرور 'Unknown' مؤقتاً إذا كان مجرد اختبار، لكن نسجل تحذيراً
-         console.warn("Partial data detected via webhook.");
-    }
+    // 4. البحث عن معلومات البطاقة
+    const card = transaction.card || payload.card || body.card || metadata.card || {};
+    
+    // 5. البحث عن معلومات CashPlus
+    const cashplus = transaction.cashplus || payload.cashplus || body.cashplus || {};
 
-    // --- 3. استخراج ومعالجة الحالة (Status) ---
-    let statusRaw = sourceData.status || body.paymentStatus || 'pending';
+    // --- استخراج الحقول الآن (أكثر أماناً) ---
+
+    // الاسم، الإيميل، الهاتف (نبحث في كائن customer أولاً، ثم الحقول المباشرة)
+    const rawName = customer.name || body.clientName || body.name || 'Unknown';
+    const rawEmail = customer.email || body.clientEmail || body.email || 'Unknown';
+    const rawPhone = customer.phone || body.clientPhone || body.phone || 'Unknown';
+
+    // معرف الطلب (Order ID)
+    // هذا مهم: في الويب هوك يأتي غالباً في transaction.order_id
+    const rawInquiryId = transaction.order_id || metadata.inquiryId || body.inquiryId || payload.order_id || 'N/A';
+
+    // --- معالجة الحالة والمبلغ (من transaction حصراً إذا وجدت) ---
+    let statusRaw = transaction.status !== undefined ? transaction.status : (body.paymentStatus || body.status || 'pending');
     let finalStatus = String(statusRaw);
 
-    // *تعديل هام*: YouCanPay ترسل الحالة كرقم 1 عند النجاح
     if (statusRaw === 1 || statusRaw === '1' || statusRaw === 'paid') {
         finalStatus = 'paid';
     } else if (statusRaw === -1) {
         finalStatus = 'failed';
     }
 
-    // --- 4. استخراج باقي البيانات ---
-    const rawCourse = metadata.course || sourceData.selectedCourse || 'N/A';
-    const rawQual = metadata.qualification || sourceData.qualification || 'N/A';
-    const rawExp = metadata.experience || sourceData.experience || 'N/A';
-    const rawLang = metadata.lang || sourceData.currentLang || 'fr';
-    
-    let rawAmount = sourceData.amount || metadata.finalAmount || null;
-    // أحياناً المبلغ يكون بـ السنتيم (Centimes)
-    if (rawAmount && rawAmount > 10000) rawAmount = rawAmount / 100; // تصحيح إذا لزم الأمر
+    // معالجة المبلغ (تحويل من السنتيم إذا لزم الأمر)
+    let rawAmount = transaction.amount || body.amount || metadata.finalAmount || null;
+    if (rawAmount && rawAmount > 10000) rawAmount = rawAmount / 100; 
 
-    // --- 5. بناء الكائن الموحد (Normalized Data) ---
+    // باقي التفاصيل من Metadata
+    const rawCourse = metadata.course || body.selectedCourse || 'N/A';
+    const rawQual = metadata.qualification || body.qualification || 'N/A';
+    const rawExp = metadata.experience || body.experience || 'N/A';
+    const rawLang = metadata.lang || body.currentLang || body.lang || 'fr';
+
+    // --- بناء الكائن النهائي الموحد ---
     const normalizedData = {
       timestamp: new Date().toLocaleString('fr-CA'),
       inquiryId: sanitizeString(rawInquiryId),
       clientName: sanitizeString(rawName),
       clientEmail: sanitizeString(rawEmail),
       clientPhone: normalizePhone(rawPhone),
+      
       selectedCourse: sanitizeString(rawCourse),
       qualification: sanitizeString(rawQual),
       experience: sanitizeString(rawExp),
       
-      paymentMethod: sanitizeString(sourceData.payment_method || metadata.paymentMethod || 'card'),
+      paymentMethod: sanitizeString(transaction.payment_method || body.payment_method || metadata.paymentMethod || 'card'),
       cashplusCode: sanitizeString(cashplus.code || null),
-      last4: sanitizeString(card.last4 || metadata.card?.last4 || null),
+      last4: sanitizeString(card.last4 || null),
       
       amount: rawAmount,
-      currency: sourceData.currency || "MAD",
+      currency: transaction.currency || body.currency || "MAD",
       lang: rawLang,
 
       utm_source: sanitizeString(metadata.utm_source || body.utm_source || ''),
       utm_medium: sanitizeString(metadata.utm_medium || body.utm_medium || ''),
       
       paymentStatus: sanitizeString(finalStatus),
-      transactionId: sanitizeString(sourceData.id || sourceData.transaction_id || body.transaction_id || 'N/A')
+      // transaction ID يأتي من id داخل transaction أو id الخارجي
+      transactionId: sanitizeString(transaction.id || body.transaction_id || body.id || 'N/A')
     };
 
-    // --- 6. الترجمة ---
+    // --- سجل للتحقق (Debug) ---
+    if (normalizedData.clientName === 'Unknown') {
+        console.warn("STILL UNKNOWN DATA. Structure dump:", JSON.stringify({
+            hasTransaction: !!payload.transaction,
+            hasCustomerInTrans: !!transaction.customer,
+            hasMetadataInTrans: !!transaction.metadata,
+            hasCustomerInPayload: !!payload.customer,
+            keysInTransaction: Object.keys(transaction)
+        }));
+    }
+
+    // --- الترجمة ---
     const t = telegramTranslations[normalizedData.lang] || telegramTranslations['fr'];
 
-    // --- 7. الحفظ في Google Sheets ---
+    // --- الحفظ في Google Sheets ---
     try {
         if (doc) {
             await authGoogleSheets();
@@ -257,7 +265,7 @@ export default async (req, res) => {
         console.error("Sheet Error:", sheetError.message);
     }
 
-    // --- 8. إرسال Telegram ---
+    // --- إرسال Telegram ---
     const message = `
 ${t.title}
 -----------------------------------
