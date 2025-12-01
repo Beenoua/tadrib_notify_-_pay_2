@@ -1,25 +1,26 @@
+// --- تم التعديل: استخدام 'import' بدلاً من 'require' ---
 import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { validateEmail, validatePhone, sanitizeString, validateRequired, normalizePhone, sanitizeTelegramHTML } from './utils.js';
 
-// 1. إعدادات الأمان
+// 2. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// التحقق من المتغيرات البيئية
+// Validate environment variables
 if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
     !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-  console.error('CRITICAL: Missing required environment variables for notify service');
+  console.error('Missing required environment variables for notify service');
 }
 
-// 2. تهيئة Google Sheet
+// 3. تهيئة Google Sheet
 let doc;
 
-// ترجمة الرسائل للإشعارات
+// ترجمة الرسائل
 const telegramTranslations = {
   ar: {
     title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳",
@@ -80,26 +81,20 @@ const telegramTranslations = {
   }
 };
 
-// دالة مصادقة Google Sheets
+// مصادقة Google Sheets
 async function authGoogleSheets() {
-  try {
-    const serviceAccountAuth = new JWT({
-      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+  const serviceAccountAuth = new JWT({
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
 
-    doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
-    await doc.loadInfo();
-  } catch (e) {
-    console.error("Google Sheets Auth Error:", e.message);
-    // لا نوقف التنفيذ هنا لكي يعمل التيليجرام حتى لو فشل الشيت
-  }
+  doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
+  await doc.loadInfo();
 }
 
-// --- المعالج الرئيسي (Main Handler) ---
 export default async (req, res) => {
-  // 1. إعدادات CORS (تسمح لـ YouCanPay بالدخول)
+  // CORS Setup
   const allowedOrigins = [
     'https://tadrib.ma',
     'https://tadrib.jaouadouarh.com',
@@ -108,15 +103,12 @@ export default async (req, res) => {
     'http://127.0.0.1:5500',
     'http://127.0.0.1:5501'
   ];
-
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else {
-    // السماح للويب هوكس (Webhooks) التي غالباً لا ترسل Origin header
     res.setHeader('Access-Control-Allow-Origin', '*'); 
   }
-
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
@@ -129,10 +121,9 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
     const data = req.body;
 
-    // تسجيل البيانات القادمة للمساعدة في التتبع (Log)
-    console.log("Notification Payload Received:", JSON.stringify(data).substring(0, 250) + "...");
+    console.log("Incoming Payload:", JSON.stringify(data).substring(0, 200)); // Log basics
 
-    // 2. الكشف الذكي عن المصدر (Webhook vs Frontend)
+    // 1. تحديد نوع الطلب (Webhook vs Frontend)
     const isWebhook =
       data.object === "event" ||               
       (data.customer && typeof data.customer === 'object') ||                         
@@ -142,47 +133,27 @@ export default async (req, res) => {
       data.id !== undefined ||
       data.status !== undefined;
 
-    // 3. توحيد البيانات (Data Normalization) - الخطوة الأهم لحل المشاكل
-    // نبحث عن البيانات في كل الأماكن المحتملة ونوحدها في متغيرات نهائية
-    
-    // الاسم
-    const rawName = isWebhook 
-        ? (data.customer?.name || data.metadata?.clientName) 
-        : (data.clientName || data.name);
-
-    // البريد الإلكتروني
-    const rawEmail = isWebhook 
-        ? (data.customer?.email || data.metadata?.clientEmail) 
-        : (data.clientEmail || data.email);
-
-    // الهاتف
-    const rawPhone = isWebhook 
-        ? (data.customer?.phone || data.metadata?.clientPhone) 
-        : (data.clientPhone || data.phone);
-
-    // معرف الطلب
-    const rawInquiryId = isWebhook 
-        ? (data.metadata?.inquiryId || data.order_id || data.inquiryId) 
-        : (data.inquiryId);
-
-    // 4. التحقق من صحة البيانات الموحدة (Validation)
-    if (!rawName || !rawEmail || !rawPhone || !rawInquiryId) {
-        // تفاصيل الخطأ للمساعدة في التصحيح
-        const missing = [];
-        if (!rawName) missing.push('Name');
-        if (!rawEmail) missing.push('Email');
-        if (!rawPhone) missing.push('Phone');
-        if (!rawInquiryId) missing.push('InquiryId');
-        
-        throw new Error(`Missing required fields: ${missing.join(', ')}`);
+    // 2. معالجة البيانات (Normalization) قبل التحقق
+    // هذا هو الجزء الذي سيصلح الخطأ 400
+    if (!isWebhook) {
+        // إذا كان الطلب من الـ Frontend، قد تأتي الحقول بأسماء مختلفة، نوحدها هنا
+        if (!data.clientName && data.name) data.clientName = data.name;
+        if (!data.clientEmail && data.email) data.clientEmail = data.email;
+        if (!data.clientPhone && data.phone) data.clientPhone = data.phone;
+        // inquiryId عادة يكون صحيحاً، لكن للاحتياط
+        if (!data.inquiryId && data.order_id) data.inquiryId = data.order_id;
     }
 
-    // التحقق من صيغة الإيميل (اختياري، تحذير فقط)
-    if (rawEmail && !validateEmail(rawEmail)) {
-        console.warn('Warning: Invalid email format:', rawEmail);
+    // 3. التحقق من الحقول المطلوبة (Validation)
+    if (isWebhook) {
+        if (data.customer) validateRequired(data.customer, ['name', 'email']); // نتساهل مع الهاتف
+        if (data.metadata) validateRequired(data.metadata, ['inquiryId']);
+    } else {
+        // الآن بعد التوحيد في الخطوة 2، هذا التحقق سيمر بسلام
+        validateRequired(data, ['clientName', 'clientEmail', 'clientPhone', 'inquiryId']);
     }
 
-    // 5. تحديد اللغة
+    // تحديد اللغة
     let lang = 'fr';
     if (data.metadata?.lang) lang = data.metadata.lang;
     else if (data.currentLang) lang = data.currentLang;
@@ -190,33 +161,26 @@ export default async (req, res) => {
 
     const t = telegramTranslations[lang] || telegramTranslations['fr'];
 
-    // 6. تحديد الحالة (Payment Status)
+    // استخراج الحالة Status
     let rawStatus = isWebhook ? data.status : data.paymentStatus;
-    // تنظيف الحالة: إذا كانت غير موجودة أو undefined نعتبرها 'pending'
     if (!rawStatus || String(rawStatus).trim().toLowerCase() === 'undefined') {
         rawStatus = 'pending';
     }
 
-    // 7. تحديد طريقة الدفع (لتجنب التلوث)
-    // إذا جاءت من الويب هوك نأخذها منه، وإلا نأخذها من الميتاداتا، وإلا من الفرونت إند
-    let paymentMethod = data.payment_method || data.metadata?.paymentMethod || data.paymentMethod;
-    if (!paymentMethod && isWebhook) paymentMethod = 'card/webhook'; // fallback
-
-    // 8. بناء كائن البيانات النهائي (Normalized Data Object)
+    // تجهيز البيانات النهائية الموحدة
     const normalizedData = {
       timestamp: data.timestamp || new Date().toLocaleString('fr-CA'),
-      inquiryId: sanitizeString(rawInquiryId),
+      inquiryId: sanitizeString(isWebhook ? (data.metadata?.inquiryId || data.order_id) : data.inquiryId),
 
-      clientName: sanitizeString(rawName),
-      clientEmail: sanitizeString(rawEmail),
-      clientPhone: normalizePhone(rawPhone),
+      clientName: sanitizeString(isWebhook ? data.customer?.name : data.clientName) || 'Unknown',
+      clientEmail: sanitizeString(isWebhook ? data.customer?.email : data.clientEmail) || 'Unknown',
+      clientPhone: normalizePhone(isWebhook ? data.customer?.phone : data.clientPhone) || 'Unknown',
 
-      selectedCourse: sanitizeString(data.metadata?.course || data.selectedCourse || 'N/A'),
-      qualification: sanitizeString(data.metadata?.qualification || data.qualification || 'N/A'),
-      experience: sanitizeString(data.metadata?.experience || data.experience || 'N/A'),
+      selectedCourse: sanitizeString(isWebhook ? data.metadata?.course : data.selectedCourse) || 'N/A',
+      qualification: sanitizeString(isWebhook ? data.metadata?.qualification : data.qualification) || 'N/A',
+      experience: sanitizeString(isWebhook ? data.metadata?.experience : data.experience) || 'N/A',
 
-      paymentMethod: sanitizeString(paymentMethod),
-      
+      paymentMethod: sanitizeString(data.payment_method || data.metadata?.paymentMethod || (isWebhook ? 'card/webhook' : data.paymentMethod)),
       cashplusCode: sanitizeString(data.cashplus?.code || null),
       last4: sanitizeString(data.card?.last4 || data.metadata?.card?.last4 || null),
       amount: data.amount || data.metadata?.finalAmount || null,
@@ -233,26 +197,23 @@ export default async (req, res) => {
       transactionId: sanitizeString(isWebhook ? (data.transaction_id || data.id) : (data.transactionId || 'N/A'))
     };
 
-    // 9. الحفظ في Google Sheets
+    // --- (نفس كود Google Sheets - لم يتغير) ---
     try {
-        if (doc) { // فقط إذا تمت التهيئة بنجاح
-            await authGoogleSheets();
-            let sheet = doc.sheetsByTitle["Leads"];
-            if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
-
-            const headers = [
+        await authGoogleSheets();
+        let sheet = doc.sheetsByTitle["Leads"];
+        if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
+        // ... (تأكد من وجود نفس Headers وكود الإضافة) ...
+        const headers = [
             "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
             "Selected Course", "Qualification", "Experience",
             "Payment Method", "CashPlus Code", "Last4Digits",
             "Amount", "Currency", "Lang",
             "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
             "Payment Status", "Transaction ID"
-            ];
-
-            await sheet.loadHeaderRow();
-            if (sheet.headerValues.length === 0) await sheet.setHeaderRow(headers);
-
-            await sheet.addRow({
+        ];
+        await sheet.loadHeaderRow();
+        if (sheet.headerValues.length === 0) await sheet.setHeaderRow(headers);
+        await sheet.addRow({
             "Timestamp": normalizedData.timestamp,
             "Inquiry ID": normalizedData.inquiryId,
             "Full Name": normalizedData.clientName,
@@ -261,30 +222,25 @@ export default async (req, res) => {
             "Selected Course": normalizedData.selectedCourse,
             "Qualification": normalizedData.qualification,
             "Experience": normalizedData.experience,
-
             "Payment Method": normalizedData.paymentMethod,
             "CashPlus Code": normalizedData.cashplusCode,
             "Last4Digits": normalizedData.last4,
             "Amount": normalizedData.amount,
             "Currency": normalizedData.currency,
             "Lang": normalizedData.lang,
-
             "utm_source": normalizedData.utm_source,
             "utm_medium": normalizedData.utm_medium,
             "utm_campaign": normalizedData.utm_campaign,
             "utm_term": normalizedData.utm_term,
             "utm_content": normalizedData.utm_content,
-
             "Payment Status": normalizedData.paymentStatus,
             "Transaction ID": normalizedData.transactionId
-            });
-        }
+        });
     } catch (sheetError) {
-        console.error("Sheet Saving Error:", sheetError.message);
-        // نستمر لإرسال رسالة التيليجرام
+        console.error("Sheet Error:", sheetError.message);
     }
 
-    // 10. إرسال رسالة التيليجرام
+    // رسالة التيليغرام
     const message = `
 ${t.title}
 -----------------------------------
@@ -293,7 +249,9 @@ ${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
 ${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
 -----------------------------------
 ${t.method} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}
-${normalizedData.cashplusCode ? `${t.cashplusCode} ${sanitizeTelegramHTML(normalizedData.cashplusCode)}\n` : ''}${normalizedData.last4 ? `${t.last4} ${sanitizeTelegramHTML(normalizedData.last4)}\n` : ''}${t.amount} ${sanitizeTelegramHTML(normalizedData.amount)} ${normalizedData.currency}
+${normalizedData.cashplusCode ? `${t.cashplusCode} ${sanitizeTelegramHTML(normalizedData.cashplusCode)}` : ''}
+${normalizedData.last4 ? `${t.last4} ${sanitizeTelegramHTML(normalizedData.last4)}` : ''}
+${t.amount} ${sanitizeTelegramHTML(normalizedData.amount)} ${normalizedData.currency}
 ${t.lang} ${sanitizeTelegramHTML(normalizedData.lang)}
 -----------------------------------
 ${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
@@ -308,15 +266,14 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
 
     await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
 
-    // الرد بنجاح
-    res.status(200).json({ result: 'success', message: 'Notification processed successfully.' });
+    res.status(200).json({ result: 'success', message: 'Webhook received and saved.' });
 
   } catch (error) {
-    console.error("Notify API Error:", error.message);
-    
-    // إرسال رد واضح للعميل (أو بوابة الدفع)
-    let clientMessage = "An error occurred while processing the notification";
-    if (error.message.includes('Missing required fields')) {
+    console.error("Webhook Error:", error.message);
+
+    // Sanitize error message for client
+    let clientMessage = "An error occurred while processing the webhook";
+    if (error.message.includes('Missing required fields') || error.message.includes('Invalid')) {
       clientMessage = error.message;
     }
 
