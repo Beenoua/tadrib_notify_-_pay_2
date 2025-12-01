@@ -508,7 +508,7 @@ export default async function handler(req, res) {
             // [جديد] مسار حذف الحملة
 if (action === 'delete_campaign') {
      if (context.role !== 'super_admin') return res.status(403).json({ error: 'الحذف مقتصر على المدير' });
-}
+}    return handleDeleteCampaign(req, res, context);
 
             // التحقق من صلاحية الحذف
             if (user.role !== 'super_admin') {
