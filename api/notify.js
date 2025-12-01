@@ -149,17 +149,6 @@ export default async (req, res) => {
     if (phoneToValidate && !validatePhone(phoneToValidate)) {
       throw new Error('Invalid phone number format');
     }
-      // --- START ROBUST FIX for 'undefined' status ---
-    // 1. Determine the raw status
-    let rawStatus = isWebhook ? data.status : data.paymentStatus;
-    
-    // 2. Clean the raw status (robustly)
-    // Check for null, undefined value, empty string, or "undefined" string
-    // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
-    if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.trim().toLowerCase() === 'undefined') {
-        rawStatus = 'pending'; // Default to 'pending' if it's invalid
-    }
-    // --- END FINAL FIX ---
 
     // جميع البيانات المهيكلة
     const normalizedData = {
