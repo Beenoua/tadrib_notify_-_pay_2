@@ -2,7 +2,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import axios from 'axios'; // [إضافة] نحتاج axios لجلب تفاصيل المعاملة
 import { validateEmail, validatePhone, sanitizeString, validateRequired, normalizePhone, sanitizeTelegramHTML } from './utils.js';
 
 // 2. إعدادات الأمان
@@ -11,10 +10,6 @@ const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-// [إضافة] مفاتيح YouCanPay لجلب التفاصيل
-const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY;
-const YOUCAN_PUBLIC_KEY = process.env.YOUCAN_PUBLIC_KEY;
-const YOUCAN_MODE = process.env.YOUCAN_MODE;
 
 // Validate environment variables
 if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
@@ -122,78 +117,22 @@ export default async (req, res) => {
 
   try {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
-    let data = req.body; // نستخدم let لأننا سنقوم بتعديل البيانات
-
-    // [DEBUG LOG]
-    console.log("Incoming Payload:", JSON.stringify(data).substring(0, 500));
-
-    // [إصلاح جذري]: التعامل مع YouCanPay Webhook المختصر
-    // إذا كان الحدث هو "دفع ناجح" ويحتوي على معرّف المعاملة، ولكن ينقصه بيانات العميل
-    if (data.event_name === 'transaction.paid' && data.payload && data.payload.transaction && data.payload.transaction.id) {
-        
-        const transactionId = data.payload.transaction.id;
-        console.log(`ℹ️ YouCanPay Lightweight Webhook detected. Fetching full details for ID: ${transactionId}...`);
-
-        try {
-            const isSandbox = YOUCAN_MODE === 'sandbox';
-            const youcanApiBaseUrl = isSandbox ? 'https://youcanpay.com/sandbox/api' : 'https://youcanpay.com/api';
-            
-            // طلب التفاصيل الكاملة من YouCanPay
-            const response = await axios.get(`${youcanApiBaseUrl}/transactions/${transactionId}`, {
-                params: {
-                    pri_key: YOUCAN_PRIVATE_KEY,
-                    pub_key: YOUCAN_PUBLIC_KEY
-                }
-            });
-
-            const fullTransaction = response.data.transaction;
-
-            if (fullTransaction) {
-                console.log("✅ Full transaction details fetched successfully.");
-                
-                // دمج البيانات الكاملة في المتغير data لكي يعمل باقي الكود بشكل طبيعي
-                // نعيد هيكلة البيانات لتناسب التنسيق الذي يتوقعه الكود في الأسفل
-                data.customer = fullTransaction.customer;
-                data.metadata = fullTransaction.metadata;
-                data.transaction_id = fullTransaction.id;
-                data.status = fullTransaction.status === 1 ? 'paid' : 'failed';
-                data.amount = fullTransaction.amount / 100; // تحويل من سنتات إلى درهم (إذا لزم الأمر، تحقق من رد YouCan)
-                // YouCan أحياناً ترسل المبلغ 180000 بمعنى 1800.00
-                
-                // فرض أن الطلب هو webhook الآن بعد أن جلبنا البيانات
-                data.is_enriched_webhook = true; 
-            }
-        } catch (fetchError) {
-            console.error("❌ Failed to fetch full transaction details:", fetchError.message);
-            // إذا فشل الجلب، لا يمكننا فعل الكثير، نرسل 200 لنتوقف عن استقبال التنبيه
-            return res.status(200).json({ result: 'ignored', message: 'Could not fetch transaction details' });
-        }
-    }
+    const data = req.body;
 
     const lang = data.metadata?.lang || data.currentLang || 'fr';
-    const t = telegramTranslations[lang] || telegramTranslations['fr'];
-
-    const userAgent = req.headers['user-agent'] || '';
-    const isYouCanPay = userAgent.includes('YouCanPay');
+    const t = telegramTranslations[lang];
 
     const isWebhook =
-    data.is_enriched_webhook ||              // [NEW] تم إثراء البيانات بنجاح
-    isYouCanPay ||                           
-    data.object === "event" ||               
-    data.customer ||                         
-    data.metadata?.paymentMethod ||          
-    data.payment_method ||                   
-    data.transaction_id ||                   
-    data.status;                             
+    data.object === "event" ||               // Stripe style
+    data.customer ||                         // Card payments send customer object
+    data.metadata?.paymentMethod ||          // UTM metadata
+    data.payment_method ||                   // General card field
+    data.transaction_id ||                   // All card payments have transaction_id
+    data.status;                             // paid / pending_cashplus / etc
 
 
     // Validate required fields for webhook
     if (isWebhook) {
-      if (!data.customer || !data.metadata) {
-          console.warn("⚠️ Webhook received but missing customer/metadata (Ignored).");
-          return res.status(200).json({ result: 'ignored', message: 'Non-transactional webhook ignored.' });
-      }
-      // الآن بعد جلب البيانات، هذه التحققات ستنجح
       validateRequired(data.customer, ['name', 'email', 'phone']);
       validateRequired(data.metadata, ['inquiryId']);
     } else {
@@ -210,14 +149,17 @@ export default async (req, res) => {
     if (phoneToValidate && !validatePhone(phoneToValidate)) {
       throw new Error('Invalid phone number format');
     }
-      
-    // Determine the raw status
+      // --- START ROBUST FIX for 'undefined' status ---
+    // 1. Determine the raw status
     let rawStatus = isWebhook ? data.status : data.paymentStatus;
     
-    // Clean the raw status (robustly)
+    // 2. Clean the raw status (robustly)
+    // Check for null, undefined value, empty string, or "undefined" string
+    // --- FINAL FIX: Apply trim() BEFORE toLowerCase() ---
     if (!rawStatus || typeof rawStatus !== 'string' || rawStatus.trim() === '' || rawStatus.trim().toLowerCase() === 'undefined') {
-        rawStatus = 'pending'; 
+        rawStatus = 'pending'; // Default to 'pending' if it's invalid
     }
+    // --- END FINAL FIX ---
 
     // جميع البيانات المهيكلة
     const normalizedData = {
@@ -245,7 +187,7 @@ export default async (req, res) => {
       utm_term: sanitizeString(data.utm_term || ''),
       utm_content: sanitizeString(data.utm_content || ''),
 
-      paymentStatus: sanitizeString(rawStatus),
+      paymentStatus: sanitizeString(isWebhook ? data.status : (data.paymentStatus || 'pending')),
       transactionId: sanitizeString(isWebhook ? data.transaction_id : (data.transactionId || 'N/A'))
     };
 
@@ -324,6 +266,7 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
   } catch (error) {
     console.error("Webhook Error:", error.message);
 
+    // Sanitize error message for client
     let clientMessage = "An error occurred while processing the webhook";
     if (error.message.includes('Missing required fields') || error.message.includes('Invalid')) {
       clientMessage = error.message;
@@ -332,3 +275,7 @@ ${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
     res.status(400).json({ error: "Bad Request", message: clientMessage });
   }
 };
+
+
+
+
