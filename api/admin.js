@@ -481,6 +481,15 @@ export default async function handler(req, res) {
             }
             // [نهاية الكود الجديد] --------------------------------- 
 
+            // داخل handler -> if (req.method === 'POST')
+            if (action === 'add_campaign') {
+                 // التحقق من الصلاحية (للمدراء أو المحررين الذين يملكون صلاحية التعديل)
+                 if (context.role !== 'super_admin' && !context.permissions?.can_edit) {
+                    return res.status(403).json({ error: 'صلاحيات غير كافية لإدارة الحملات' });
+                 }
+                 return handlePostCampaign(req, res, context);
+            }
+
             return handlePost(req, res, user);
         } else if (req.method === 'PUT') {
             // التحقق من صلاحية التعديل
@@ -501,6 +510,43 @@ export default async function handler(req, res) {
     } catch (error) {
         console.error('Handler Error:', error);
         return res.status(500).json({ error: 'Internal Server Error' });
+    }
+}
+
+// ============================================================
+// (NEW) تسجيل حملة جديدة في Campaign_Registry
+// ============================================================
+async function handlePostCampaign(req, res, context) {
+    try {
+        const doc = await _getSafeDocConnection();
+        let sheet = doc.sheetsByTitle["Campaign_Registry"];
+        
+        // إنشاء الورقة إذا لم تكن موجودة (للاحتياط)
+        if (!sheet) {
+            sheet = await doc.addSheet({ 
+                headerValues: ['Campaign Name', 'Start DateTime', 'End DateTime', 'Status'] 
+            });
+            await sheet.updateProperties({ title: "Campaign_Registry" });
+        }
+
+        const { name, start, end, status } = req.body;
+
+        if (!name || !start) {
+            return res.status(400).json({ error: 'اسم الحملة ووقت البداية مطلوبان' });
+        }
+
+        await sheet.addRow({
+            'Campaign Name': name,
+            'Start DateTime': start, // يجب أن يصل بتنسيق YYYY-MM-DD HH:mm
+            'End DateTime': end || '',
+            'Status': status || 'Active'
+        });
+
+        res.status(201).json({ success: true, message: 'تم تسجيل الحملة بنجاح' });
+
+    } catch (error) {
+        console.error('Post Campaign Error:', error);
+        res.status(500).json({ error: error.message });
     }
 }
 
