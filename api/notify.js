@@ -143,6 +143,13 @@ export default async (req, res) => {
     // --- Security Check: Verify YouCanPay Signature ---
     // نتخطى التحقق إذا كان الطلب من Postman (للتجارب) أو إذا لم يتم إعداد المفتاح
     const signature = req.headers['youcan-pay-signature'];
+
+    // [DEBUG LOG]: لنعرف من المفقود (المفتاح أم التوقيع)
+    console.log("Security Debug:", { 
+        hasPrivateKey: !!YOUCAN_PRIVATE_KEY, 
+        receivedSignature: signature ? "Yes (Hidden)" : "Missing",
+        headersKeys: Object.keys(req.headers) // لنرى أسماء الهيدرز التي تصل فعلاً
+    });
     
     // ملاحظة: في بيئة الإنتاج يجب إزالة استثناء Postman
     if (YOUCAN_PRIVATE_KEY && signature) {
