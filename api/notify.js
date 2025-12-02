@@ -201,6 +201,9 @@ export default async (req, res) => {
 
       utm_source: sanitizeString(metadata.utm_source || body.utm_source || ''),
       utm_medium: sanitizeString(metadata.utm_medium || body.utm_medium || ''),
+      utm_campaign: sanitizeString(metadata.utm_campaign || body.utm_campaign || ''),
+      utm_term: sanitizeString(metadata.utm_term || body.utm_term || ''),
+      utm_content: sanitizeString(metadata.utm_content || body.utm_content || ''),
       
       paymentStatus: sanitizeString(finalStatus),
       // transaction ID يأتي من id داخل transaction أو id الخارجي
@@ -236,7 +239,7 @@ export default async (req, res) => {
             "Selected Course", "Qualification", "Experience",
             "Payment Method", "CashPlus Code", "Last4Digits",
             "Amount", "Currency", "Lang",
-            "utm_source", "utm_medium", 
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", 
             "Payment Status", "Transaction ID"
             ];
 
@@ -260,6 +263,9 @@ export default async (req, res) => {
             "Lang": normalizedData.lang,
             "utm_source": normalizedData.utm_source,
             "utm_medium": normalizedData.utm_medium,
+            "utm_campaign": normalizedData.utm_campaign,
+            "utm_term": normalizedData.utm_term,
+            "utm_content": normalizedData.utm_content,
             "Payment Status": normalizedData.paymentStatus,
             "Transaction ID": normalizedData.transactionId
             });
