@@ -1,127 +1,348 @@
-// --- ملف جديد: إرسال كود الدفع عبر Brevo (بريد إلكتروني) ---
-// --- تأكد من تثبيت الحزمة: npm install sib-api-v3-sdk ---
-import SibApiV3Sdk from 'sib-api-v3-sdk';
+import TelegramBot from 'node-telegram-bot-api';
+import { JWT } from 'google-auth-library';
+import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { validateEmail, normalizePhone, sanitizeString, sanitizeTelegramHTML } from './utils.js';
+import crypto from 'crypto';
 
-// 1. قراءة إعدادات Brevo من متغيرات البيئة
-const BREVO_API_KEY = process.env.BREVO_API_KEY; // المفتاح الذي تستخدمه مسبقاً
-const EMAIL_SENDER_ADDRESS = process.env.EMAIL_SENDER_ADDRESS; // الإيميل الذي سترسل منه (يجب أن يكون مُفعّلاً في Brevo)
-const EMAIL_SENDER_NAME = "Tadrib.ma"; // اسم المرسل
+// 1. إعدادات الأمان
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY;
 
-// 2. إعدادات الدورات (لحساب السعر)
-const courseData = {
-    pmp: { originalPrice: 2800 },
-    planning: { originalPrice: 2800 },
-    qse: { originalPrice: 2450 },
-    softskills: { originalPrice: 1700 },
-    other: { originalPrice: 199 }
-};
-const discountPercentage = 35;
+// التحقق من المتغيرات البيئية
+if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
+    !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  console.error('CRITICAL: Missing required environment variables for notify service');
+}
 
-// 3. ترجمات رسائل البريد الإلكتروني
-const emailTranslations = {
+// 2. تهيئة Google Sheet
+let doc;
+
+// ترجمة الرسائل
+const telegramTranslations = {
   ar: {
-    subject: "كود الدفع كاش بلوس الخاص بك | Tadrib.ma",
-    body: (code, price) => `
-      <p>مرحباً،</p>
-      <p>شكراً لاهتمامك بالانضمام إلى Tadrib.ma.</p>
-      <p>لاستكمال حجزك، يرجى استخدام كود الدفع التالي لدى أقرب وكالة كاش بلوس:</p>
-      <h2 style="font-size: 24px; color: #1E3A8A; margin: 15px 0;">${code}</h2>
-      <p>المبلغ الإجمالي للدفع هو: <b>${price} درهم</b>.</p>
-      <p>شكراً لك.</p>
-    `
+    title: "✅ <b>حجز مدفوع جديد (Tadrib.ma)</b> 💳",
+    course: "<b>الدورة:</b>",
+    qualification: "<b>المؤهل:</b>",
+    experience: "<b>الخبرة:</b>",
+    name: "<b>الاسم:</b>",
+    phone: "<b>الهاتف:</b>",
+    email: "<b>الإيميل:</b>",
+    time: "<b>الوقت:</b>",
+    status: "<b>الحالة:</b>",
+    tx_id: "<b>رقم المعاملة:</b>",
+    req_id: "<b>معرف الطلب:</b>",
+    method: "<b>طريقة الأداء:</b>",
+    amount: "<b>المبلغ:</b>",
+    currency: "<b>العملة:</b>",
+    lang: "<b>اللغة:</b>",
+    cashplusCode: "<b>كود كاش بلوس:</b>",
+    last4: "<b>آخر 4 أرقام:</b>"
   },
   fr: {
-    subject: "Votre code de paiement CashPlus | Tadrib.ma",
-    body: (code, price) => `
-      <p>Bonjour,</p>
-      <p>Merci de votre intérêt pour Tadrib.ma.</p>
-      <p>Pour finaliser votre réservation, veuillez utiliser le code de paiement suivant auprès de l'agence CashPlus la plus proche :</p>
-      <h2 style="font-size: 24px; color: #1E3A8A; margin: 15px 0;">${code}</h2>
-      <p>Le montant total à payer est de : <b>${price} DH</b>.</p>
-      <p>Merci.</p>
-    `
+    title: "✅ <b>Nouvelle Réservation Payée (Tadrib.ma)</b> 💳",
+    course: "<b>Formation:</b>",
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Expérience:</b>",
+    name: "<b>Nom:</b>",
+    phone: "<b>Téléphone:</b>",
+    email: "<b>E-mail:</b>",
+    time: "<b>Heure:</b>",
+    status: "<b>Statut:</b>",
+    tx_id: "<b>ID Transaction:</b>",
+    req_id: "<b>ID Requête:</b>",
+    method: "<b>Méthode:</b>",
+    amount: "<b>Montant:</b>",
+    currency: "<b>Devise:</b>",
+    lang: "<b>Langue:</b>",
+    cashplusCode: "<b>Code CashPlus:</b>",
+    last4: "<b>4 Derniers:</b>"
   },
   en: {
-    subject: "Your CashPlus Payment Code | Tadrib.ma",
-    body: (code, price) => `
-      <p>Hello,</p>
-      <p>Thank you for your interest in Tadrib.ma.</p>
-      <p>To finalize your booking, please use the following payment code at the nearest CashPlus agency:</p>
-      <h2 style="font-size: 24px; color: #1E3A8A; margin: 15px 0;">${code}</h2>
-      <p>The total amount to pay is: <b>${price} MAD</b>.</p>
-      <p>Thank you.</p>
-    `
+    title: "✅ <b>New Paid Booking (Tadrib.ma)</b> 💳",
+    course: "<b>Course:</b>",
+    qualification: "<b>Qualification:</b>",
+    experience: "<b>Experience:</b>",
+    name: "<b>Name:</b>",
+    phone: "<b>Phone:</b>",
+    email: "<b>Email:</b>",
+    time: "<b>Time:</b>",
+    status: "<b>Status:</b>",
+    tx_id: "<b>Transaction ID:</b>",
+    req_id: "<b>Request ID:</b>",
+    method: "<b>Method:</b>",
+    amount: "<b>Amount:</b>",
+    currency: "<b>Currency:</b>",
+    lang: "<b>Lang:</b>",
+    cashplusCode: "<b>CashPlus Code:</b>",
+    last4: "<b>Card Last 4:</b>"
   }
 };
 
-// 4. تهيئة عميل Brevo
-const defaultClient = SibApiV3Sdk.ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = BREVO_API_KEY;
+// دالة مصادقة Google Sheets
+async function authGoogleSheets() {
+  try {
+    const serviceAccountAuth = new JWT({
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
 
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+    doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID, serviceAccountAuth);
+    await doc.loadInfo();
+  } catch (e) {
+    console.error("Google Sheets Auth Error:", e.message);
+  }
+}
 
-// 5. الدالة الرئيسية للخادم
+function verifyYouCanSignature(privateKey, payload, receivedSignature) {
+  if (!privateKey || !receivedSignature) return false;
+  
+  // YouCanPay uses HMAC SHA256
+  const signature = crypto
+    .createHmac('sha256', privateKey)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+    
+  return signature === receivedSignature;
+}
+
 export default async (req, res) => {
-  // --- إعدادات CORS ---
+  // CORS Setup
   const allowedOrigins = [
-    'https://tadrib.ma', 
-    'https://tadrib.jaouadouarh.com', 
+    'https://tadrib.ma',
+    'https://tadrib.jaouadouarh.com',
     'https://tadrib-cash.jaouadouarh.com',
     'http://localhost:3000',
     'http://127.0.0.1:5500',
     'http://127.0.0.1:5501'
   ];
+
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
   }
+
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ message: 'Method Not Allowed' });
 
-  // التحقق من الإعدادات
-  if (!BREVO_API_KEY || !EMAIL_SENDER_ADDRESS) {
-      console.error("Brevo API Key or Email Sender Address is not configured.");
-      return res.status(500).json({ result: 'error', message: 'Email service not configured.' });
-  }
+  let bot;
 
   try {
-    const data = req.body;
+    bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
+    const body = req.body;
+
+    // --- Security Check: Verify YouCanPay Signature ---
+    // نتخطى التحقق إذا كان الطلب من Postman (للتجارب) أو إذا لم يتم إعداد المفتاح
+    const signature = req.headers['youcan-pay-signature'];
     
-    // 1. التحقق من البيانات
-    if (!data.toEmail || !data.toName || !data.cashPlusCode || !data.courseKey || !data.lang) {
-      return res.status(400).json({ result: 'error', message: 'Missing required fields: toEmail, toName, cashPlusCode, courseKey, lang' });
+    // ملاحظة: في بيئة الإنتاج يجب إزالة استثناء Postman
+    if (YOUCAN_PRIVATE_KEY && signature) {
+        const isValid = verifyYouCanSignature(YOUCAN_PRIVATE_KEY, body, signature);
+        if (!isValid) {
+            console.error('Invalid Webhook Signature detected!');
+            return res.status(401).json({ message: 'Invalid Signature' });
+        }
+        console.log('Webhook Signature Verified ✅');
+    } else {
+        console.warn('Skipping signature verification (Missing Key or Signature header)');
+    }
+    // --------------------------------------------------
+
+    console.log("Incoming Payload:", JSON.stringify(body).substring(0, 500)); 
+
+    // --- [تحسين جذري] استخراج البيانات متعدد المستويات (Multi-Level Extraction) ---
+    
+    // 1. تحديد المصادر المحتملة للبيانات
+    const payload = body.payload || {};
+    const transaction = payload.transaction || body.transaction || {}; 
+    
+    // ملاحظة: transaction هي المصدر الأوثق للحالة والمبلغ
+    
+    // 2. البحث عن Customer في كل مكان (الأولوية للداخل ثم الخارج)
+    const customer = transaction.customer || payload.customer || body.customer || {};
+    
+    // 3. البحث عن Metadata في كل مكان
+    const metadata = transaction.metadata || payload.metadata || body.metadata || {};
+
+    // 4. البحث عن معلومات البطاقة
+    // بما أن البوابة لا ترسل last4، نتركها null أو نأخذها من الميتاداتا إذا قمنا بحقنها يدوياً
+    const card = transaction.card || payload.card || body.card || metadata.card || {};
+    // التعديل: نستخدم القيمة فقط إذا كانت موجودة، وإلا نتركها null
+    const finalLast4 = sanitizeString(card.last4 || metadata.last4 || null);
+    
+    // 5. البحث عن معلومات CashPlus
+    const cashplus = transaction.cashplus || payload.cashplus || body.cashplus || {};
+
+    // --- استخراج الحقول الآن (أكثر أماناً) ---
+
+    // الاسم، الإيميل، الهاتف (نبحث في كائن customer أولاً، ثم الحقول المباشرة)
+    const rawName = customer.name || body.clientName || body.name || 'Unknown';
+    const rawEmail = customer.email || body.clientEmail || body.email || 'Unknown';
+    const rawPhone = customer.phone || body.clientPhone || body.phone || 'Unknown';
+
+    // معرف الطلب (Order ID)
+    // هذا مهم: في الويب هوك يأتي غالباً في transaction.order_id
+    const rawInquiryId = transaction.order_id || metadata.inquiryId || body.inquiryId || payload.order_id || 'N/A';
+
+    // --- معالجة الحالة والمبلغ (من transaction حصراً إذا وجدت) ---
+    let statusRaw = transaction.status !== undefined ? transaction.status : (body.paymentStatus || body.status || 'pending');
+    let finalStatus = String(statusRaw);
+
+    if (statusRaw === 1 || statusRaw === '1' || statusRaw === 'paid') {
+        finalStatus = 'paid';
+    } else if (statusRaw === -1) {
+        finalStatus = 'failed';
     }
 
-    // 2. حساب السعر
-    const courseKey = data.courseKey || 'other';
-    const originalPrice = courseData[courseKey].originalPrice;
-    const amount = Math.round((originalPrice * (1 - discountPercentage / 100)) / 50) * 50;
+    // معالجة المبلغ (تحويل من السنتيم إذا لزم الأمر)
+    let rawAmount = transaction.amount || body.amount || metadata.finalAmount || null;
+    if (rawAmount && rawAmount > 10000) rawAmount = rawAmount / 100; 
 
-    // 4. اختيار الترجمة
-    const lang = emailTranslations[data.lang] ? data.lang : 'fr';
-    const emailSubject = emailTranslations[lang].subject;
-    const emailBody = emailTranslations[lang].body(data.cashPlusCode, amount);
+    // باقي التفاصيل من Metadata
+    const rawCourse = metadata.course || body.selectedCourse || 'N/A';
+    const rawQual = metadata.qualification || body.qualification || 'N/A';
+    const rawExp = metadata.experience || body.experience || 'N/A';
+    const rawLang = metadata.lang || body.currentLang || body.lang || 'fr';
 
-    // 5. تجهيز الرسالة
-    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-    sendSmtpEmail.subject = emailSubject;
-    sendSmtpEmail.htmlContent = `<html><body>${emailBody}</body></html>`;
-    sendSmtpEmail.sender = { name: EMAIL_SENDER_NAME, email: EMAIL_SENDER_ADDRESS };
-    sendSmtpEmail.to = [{ email: data.toEmail, name: data.toName }];
-    
-    // 6. إرسال الرسالة
-    await apiInstance.sendTransacEmail(sendSmtpEmail);
+    // --- بناء الكائن النهائي الموحد ---
+    const normalizedData = {
+      timestamp: new Date().toLocaleString('fr-CA'),
+      inquiryId: sanitizeString(rawInquiryId),
+      clientName: sanitizeString(rawName),
+      clientEmail: sanitizeString(rawEmail),
+      clientPhone: normalizePhone(rawPhone),
+      
+      selectedCourse: sanitizeString(rawCourse),
+      qualification: sanitizeString(rawQual),
+      experience: sanitizeString(rawExp),
+      
+      paymentMethod: sanitizeString(transaction.payment_method || body.payment_method || metadata.paymentMethod || 'card'),
+      cashplusCode: sanitizeString(cashplus.code || null),
+      last4: sanitizeString(card.finalLast4 || null),
+      
+      amount: rawAmount,
+      currency: transaction.currency || body.currency || "MAD",
+      lang: rawLang,
 
-    res.status(200).json({ result: 'success', message: 'Email sent successfully.' });
+      utm_source: sanitizeString(metadata.utm_source || body.utm_source || ''),
+      utm_medium: sanitizeString(metadata.utm_medium || body.utm_medium || ''),
+      utm_campaign: sanitizeString(metadata.utm_campaign || body.utm_campaign || ''),
+      utm_term: sanitizeString(metadata.utm_term || body.utm_term || ''),
+      utm_content: sanitizeString(metadata.utm_content || body.utm_content || ''),
+      
+      paymentStatus: sanitizeString(finalStatus),
+      // transaction ID يأتي من id داخل transaction أو id الخارجي
+      transactionId: sanitizeString(transaction.id || body.transaction_id || body.id || 'N/A')
+    };
+
+    // --- سجل للتحقق (Debug) ---
+    if (normalizedData.clientName === 'Unknown') {
+        console.warn("STILL UNKNOWN DATA. Structure dump:", JSON.stringify({
+            hasTransaction: !!payload.transaction,
+            hasCustomerInTrans: !!transaction.customer,
+            hasMetadataInTrans: !!transaction.metadata,
+            hasCustomerInPayload: !!payload.customer,
+            keysInTransaction: Object.keys(transaction)
+        }));
+    }
+
+    // --- الترجمة ---
+    const t = telegramTranslations[normalizedData.lang] || telegramTranslations['fr'];
+
+   // --- الحفظ في Google Sheets ---
+    try {
+        // [تصحيح]: نستدعي دالة الاتصال أولاً لملء المتغير doc
+        await authGoogleSheets(); 
+
+        // الآن نتحقق إذا تم الاتصال بنجاح
+        if (doc) {
+            let sheet = doc.sheetsByTitle["Leads"];
+            if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
+
+            const headers = [
+            "Timestamp", "Inquiry ID", "Full Name", "Email", "Phone Number",
+            "Selected Course", "Qualification", "Experience",
+            "Payment Method", "CashPlus Code", "Last4Digits",
+            "Amount", "Currency", "Lang",
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", 
+            "Payment Status", "Transaction ID"
+            ];
+
+            await sheet.loadHeaderRow();
+            if (sheet.headerValues.length === 0) await sheet.setHeaderRow(headers);
+
+            await sheet.addRow({
+            "Timestamp": normalizedData.timestamp,
+            "Inquiry ID": normalizedData.inquiryId,
+            "Full Name": normalizedData.clientName,
+            "Email": normalizedData.clientEmail,
+            "Phone Number": normalizedData.clientPhone,
+            "Selected Course": normalizedData.selectedCourse,
+            "Qualification": normalizedData.qualification,
+            "Experience": normalizedData.experience,
+            "Payment Method": normalizedData.paymentMethod,
+            "CashPlus Code": normalizedData.cashplusCode,
+            "Last4Digits": normalizedData.last4,
+            "Amount": normalizedData.amount,
+            "Currency": normalizedData.currency,
+            "Lang": normalizedData.lang,
+            "utm_source": normalizedData.utm_source,
+            "utm_medium": normalizedData.utm_medium,
+            "utm_campaign": normalizedData.utm_campaign,
+            "utm_term": normalizedData.utm_term,
+            "utm_content": normalizedData.utm_content,
+            "Payment Status": normalizedData.paymentStatus,
+            "Transaction ID": normalizedData.transactionId
+            });
+            console.log("Successfully saved to Google Sheets");
+        } else {
+            console.error("Google Sheets doc is not initialized.");
+        }
+    } catch (sheetError) {
+        console.error("Sheet Error:", sheetError.message);
+    }
+
+    // --- إرسال Telegram ---
+    const message = `
+${t.title}
+-----------------------------------
+${t.course} ${sanitizeTelegramHTML(normalizedData.selectedCourse)}
+${t.qualification} ${sanitizeTelegramHTML(normalizedData.qualification)}
+${t.experience} ${sanitizeTelegramHTML(normalizedData.experience)}
+-----------------------------------
+${t.method} ${sanitizeTelegramHTML(normalizedData.paymentMethod)}
+${normalizedData.cashplusCode ? `${t.cashplusCode} ${sanitizeTelegramHTML(normalizedData.cashplusCode)}\n` : ''}${normalizedData.last4 ? `${t.last4} ${sanitizeTelegramHTML(normalizedData.last4)}\n` : ''}${t.amount} ${sanitizeTelegramHTML(normalizedData.amount)} ${normalizedData.currency}
+${t.lang} ${sanitizeTelegramHTML(normalizedData.lang)}
+-----------------------------------
+${t.name} ${sanitizeTelegramHTML(normalizedData.clientName)}
+${t.phone} ${sanitizeTelegramHTML(normalizedData.clientPhone)}
+${t.email} ${sanitizeTelegramHTML(normalizedData.clientEmail)}
+-----------------------------------
+${t.req_id} ${sanitizeTelegramHTML(normalizedData.inquiryId)}
+${t.status} ${sanitizeTelegramHTML(normalizedData.paymentStatus)}
+${t.tx_id} ${sanitizeTelegramHTML(normalizedData.transactionId)}
+${t.time} ${sanitizeTelegramHTML(normalizedData.timestamp)}
+    `;
+
+    try {
+        await bot.sendMessage(TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
+    } catch (botError) {
+         console.error("Telegram Error:", botError.message);
+    }
+
+    res.status(200).json({ result: 'success', message: 'Notification processed.' });
 
   } catch (error) {
-    console.error('Email Sending Error (Brevo):', error.body || error.message);
-    // إرجاع خطأ 200 (لعدم إيقاف الواجهة الأمامية) ولكن مع رسالة خطأ
-    res.status(200).json({ result: 'error', message: `Email failed: ${error.message}` });
+    console.error("Handler Error:", error.message);
+    res.status(400).json({ error: "Bad Request", message: error.message });
   }
 };
