@@ -173,11 +173,15 @@ export default async (req, res) => {
     // 3. البحث عن Metadata في كل مكان
     const metadata = transaction.metadata || payload.metadata || body.metadata || {};
 
-    // 4. البحث عن معلومات البطاقة
-    // بما أن البوابة لا ترسل last4، نتركها null أو نأخذها من الميتاداتا إذا قمنا بحقنها يدوياً
-    const card = transaction.card || payload.card || body.card || metadata.card || {};
-    // التعديل: نستخدم القيمة فقط إذا كانت موجودة، وإلا نتركها null
-    const finalLast4 = sanitizeString(card.last4 || metadata.last4 || null);
+    // 4. البحث عن معلومات البطاقة (تحديث شامل لالتقاط last_digits)
+    // أولاً: نحدد كائن payment_method إذا وجد (لأنه يحتوي على البطاقة غالباً)
+    const pmObj = transaction.payment_method || payload.payment_method || body.payment_method || {};
+    
+    // ثانياً: نبحث عن كائن البطاقة card في كل الأماكن المحتملة
+    const card = transaction.card || payload.card || body.card || metadata.card || pmObj.card || {};
+    
+    // ثالثاً: نستخرج الأرقام (YouCanPay تسميها last_digits أحياناً)
+    const finalLast4 = sanitizeString(card.last4 || card.last_digits || metadata.last4 || null);
     
     // 5. البحث عن معلومات CashPlus
     const cashplus = transaction.cashplus || payload.cashplus || body.cashplus || {};
@@ -225,9 +229,9 @@ export default async (req, res) => {
       qualification: sanitizeString(rawQual),
       experience: sanitizeString(rawExp),
       
-      paymentMethod: sanitizeString(transaction.payment_method || body.payment_method || metadata.paymentMethod || 'card'),
+      paymentMethod: sanitizeString(pmObj.name || transaction.payment_method || body.payment_method || metadata.paymentMethod || 'card'),
       cashplusCode: sanitizeString(cashplus.code || null),
-      last4: sanitizeString(card.finalLast4 || null),
+      last4: finalLast4,
       
       amount: rawAmount,
       currency: transaction.currency || body.currency || "MAD",
