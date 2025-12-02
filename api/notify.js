@@ -4,6 +4,22 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { validateEmail, normalizePhone, sanitizeString, sanitizeTelegramHTML } from './utils.js';
 import crypto from 'crypto';
 
+// --- [إضافة جديدة] إعدادات لتعطيل معالجة Vercel التلقائية ---
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+// --- [إضافة جديدة] دالة لقراءة البيانات الخام ---
+async function getRawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 // 1. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -101,10 +117,12 @@ async function authGoogleSheets() {
 function verifyYouCanSignature(privateKey, payload, receivedSignature) {
   if (!privateKey || !receivedSignature) return false;
   
-  // YouCanPay uses HMAC SHA256
+  // إذا كان الـ payload نصاً (وهو ما نريده) نستخدمه، وإلا نحوله (للاحتياط)
+  const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  
   const signature = crypto
     .createHmac('sha256', privateKey)
-    .update(JSON.stringify(payload))
+    .update(content)
     .digest('hex');
     
   return signature === receivedSignature;
@@ -138,22 +156,28 @@ export default async (req, res) => {
 
   try {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
-    const body = req.body;
+    // 1. قراءة البيانات الخام (Raw Body)
+    const rawBody = await getRawBody(req);
+    let body;
+    try {
+        body = JSON.parse(rawBody);
+    } catch (parseError) {
+        console.error("JSON Parse Error:", parseError);
+        return res.status(400).json({ message: 'Invalid JSON' });
+    }
 
     // --- Security Check: Verify YouCanPay Signature ---
-    // نتخطى التحقق إذا كان الطلب من Postman (للتجارب) أو إذا لم يتم إعداد المفتاح
     const signature = req.headers['youcan-pay-signature'] || req.headers['x-youcanpay-signature'];
 
-    // [DEBUG LOG]: لنعرف من المفقود (المفتاح أم التوقيع)
     console.log("Security Debug:", { 
         hasPrivateKey: !!YOUCAN_PRIVATE_KEY, 
-        receivedSignature: signature ? "Yes (Hidden)" : "Missing",
-        headersKeys: Object.keys(req.headers) // لنرى أسماء الهيدرز التي تصل فعلاً
+        receivedSignature: signature ? "Yes (Hidden)" : "Missing"
     });
     
-    // ملاحظة: في بيئة الإنتاج يجب إزالة استثناء Postman
     if (YOUCAN_PRIVATE_KEY && signature) {
-        const isValid = verifyYouCanSignature(YOUCAN_PRIVATE_KEY, body, signature);
+        // [مهم] نمرر rawBody للتحقق بدلاً من body
+        const isValid = verifyYouCanSignature(YOUCAN_PRIVATE_KEY, rawBody, signature);
+        
         if (!isValid) {
             console.error('Invalid Webhook Signature detected!');
             return res.status(401).json({ message: 'Invalid Signature' });
