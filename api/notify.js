@@ -142,7 +142,7 @@ export default async (req, res) => {
 
     // --- Security Check: Verify YouCanPay Signature ---
     // نتخطى التحقق إذا كان الطلب من Postman (للتجارب) أو إذا لم يتم إعداد المفتاح
-    const signature = req.headers['youcan-pay-signature'];
+    const signature = req.headers['youcan-pay-signature'] || req.headers['x-youcanpay-signature'];
 
     // [DEBUG LOG]: لنعرف من المفقود (المفتاح أم التوقيع)
     console.log("Security Debug:", { 
