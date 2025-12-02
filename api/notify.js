@@ -221,10 +221,13 @@ export default async (req, res) => {
     // --- الترجمة ---
     const t = telegramTranslations[normalizedData.lang] || telegramTranslations['fr'];
 
-    // --- الحفظ في Google Sheets ---
+   // --- الحفظ في Google Sheets ---
     try {
+        // [تصحيح]: نستدعي دالة الاتصال أولاً لملء المتغير doc
+        await authGoogleSheets(); 
+
+        // الآن نتحقق إذا تم الاتصال بنجاح
         if (doc) {
-            await authGoogleSheets();
             let sheet = doc.sheetsByTitle["Leads"];
             if (!sheet) sheet = await doc.addSheet({ title: "Leads" });
 
@@ -260,6 +263,9 @@ export default async (req, res) => {
             "Payment Status": normalizedData.paymentStatus,
             "Transaction ID": normalizedData.transactionId
             });
+            console.log("Successfully saved to Google Sheets");
+        } else {
+            console.error("Google Sheets doc is not initialized.");
         }
     } catch (sheetError) {
         console.error("Sheet Error:", sheetError.message);
