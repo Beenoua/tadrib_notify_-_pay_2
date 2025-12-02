@@ -2,6 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { JWT } from 'google-auth-library';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { validateEmail, normalizePhone, sanitizeString, sanitizeTelegramHTML } from './utils.js';
+import crypto from 'crypto';
 
 // 1. إعدادات الأمان
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -9,6 +10,7 @@ const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const YOUCAN_PRIVATE_KEY = process.env.YOUCAN_PRIVATE_KEY;
 
 // التحقق من المتغيرات البيئية
 if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY ||
@@ -96,6 +98,18 @@ async function authGoogleSheets() {
   }
 }
 
+function verifyYouCanSignature(privateKey, payload, receivedSignature) {
+  if (!privateKey || !receivedSignature) return false;
+  
+  // YouCanPay uses HMAC SHA256
+  const signature = crypto
+    .createHmac('sha256', privateKey)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+    
+  return signature === receivedSignature;
+}
+
 export default async (req, res) => {
   // CORS Setup
   const allowedOrigins = [
@@ -126,6 +140,23 @@ export default async (req, res) => {
     bot = new TelegramBot(TELEGRAM_BOT_TOKEN);
     const body = req.body;
 
+    // --- Security Check: Verify YouCanPay Signature ---
+    // نتخطى التحقق إذا كان الطلب من Postman (للتجارب) أو إذا لم يتم إعداد المفتاح
+    const signature = req.headers['youcan-pay-signature'];
+    
+    // ملاحظة: في بيئة الإنتاج يجب إزالة استثناء Postman
+    if (YOUCAN_PRIVATE_KEY && signature) {
+        const isValid = verifyYouCanSignature(YOUCAN_PRIVATE_KEY, body, signature);
+        if (!isValid) {
+            console.error('Invalid Webhook Signature detected!');
+            return res.status(401).json({ message: 'Invalid Signature' });
+        }
+        console.log('Webhook Signature Verified ✅');
+    } else {
+        console.warn('Skipping signature verification (Missing Key or Signature header)');
+    }
+    // --------------------------------------------------
+
     console.log("Incoming Payload:", JSON.stringify(body).substring(0, 500)); 
 
     // --- [تحسين جذري] استخراج البيانات متعدد المستويات (Multi-Level Extraction) ---
@@ -143,7 +174,10 @@ export default async (req, res) => {
     const metadata = transaction.metadata || payload.metadata || body.metadata || {};
 
     // 4. البحث عن معلومات البطاقة
+    // بما أن البوابة لا ترسل last4، نتركها null أو نأخذها من الميتاداتا إذا قمنا بحقنها يدوياً
     const card = transaction.card || payload.card || body.card || metadata.card || {};
+    // التعديل: نستخدم القيمة فقط إذا كانت موجودة، وإلا نتركها null
+    const finalLast4 = sanitizeString(card.last4 || metadata.last4 || null);
     
     // 5. البحث عن معلومات CashPlus
     const cashplus = transaction.cashplus || payload.cashplus || body.cashplus || {};
@@ -193,7 +227,7 @@ export default async (req, res) => {
       
       paymentMethod: sanitizeString(transaction.payment_method || body.payment_method || metadata.paymentMethod || 'card'),
       cashplusCode: sanitizeString(cashplus.code || null),
-      last4: sanitizeString(card.last4 || null),
+      last4: sanitizeString(card.finalLast4 || null),
       
       amount: rawAmount,
       currency: transaction.currency || body.currency || "MAD",
