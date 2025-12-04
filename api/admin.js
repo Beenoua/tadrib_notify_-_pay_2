@@ -505,11 +505,14 @@ export default async function handler(req, res) {
             return handlePut(req, res, user);
         } else if (req.method === 'DELETE') {
 
-            // [جديد] مسار حذف الحملة
-if (action === 'delete_campaign') {
-     if (context.role !== 'super_admin') return res.status(403).json({ error: 'الحذف مقتصر على المدير' });
-}    return handleDeleteCampaign(req, res, context);
+            // [تصحيح] مسار حذف الحملة (يتم الدخول إليه فقط إذا كان الإجراء هو delete_campaign)
+            if (action === 'delete_campaign') {
+                 if (context.role !== 'super_admin') return res.status(403).json({ error: 'الحذف مقتصر على المدير' });
+                 return handleDeleteCampaign(req, res, context);
+            }
 
+            // الآن، إذا لم يكن حذف حملة، سيصل الكود إلى هنا (حذف المعاملات)
+            
             // التحقق من صلاحية الحذف
             if (user.role !== 'super_admin') {
                  return res.status(403).json({ error: 'الحذف مقتصر على المدير العام' });
